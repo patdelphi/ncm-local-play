@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ncm-cli 音乐控制</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 300px 1fr 400px;
+            gap: 20px;
+        }
+        
+        .side-panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            max-height: calc(100vh - 40px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .side-panel-left {
+            overflow-y: auto;
+        }
+        
+        .side-panel-left::-webkit-scrollbar,
+        .side-panel-right::-webkit-scrollbar,
+        .song-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .side-panel-left::-webkit-scrollbar-track,
+        .side-panel-right::-webkit-scrollbar-track,
+        .song-list::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+        }
+        
+        .side-panel-left::-webkit-scrollbar-thumb,
+        .side-panel-right::-webkit-scrollbar-thumb,
+        .song-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+        
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        header {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        h1 {
+            font-size: 1.8em;
+            background: linear-gradient(45deg, #e94560, #ff6b6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+        
+        .user-avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.stopped { background: #f44336; }
+        .status-dot.paused { background: #ff9800; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .now-playing {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .playlist-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(233, 69, 96, 0.2);
+            border-radius: 10px;
+            font-size: 0.9em;
+        }
+        
+        .song-title {
+            font-size: 1.6em;
+            font-weight: bold;
+            margin-bottom: 20px;
+            transition: opacity 0.3s ease;
+        }
+        
+        .progress-container {
+            margin: 20px 0;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            border-radius: 4px;
+            transition: width 1s linear;
+        }
+        
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 0.85em;
+            color: #aaa;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .btn {
+            padding: 12px 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            filter: brightness(1.2);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(45deg, #e94560, #ff6b6b);
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(45deg, #4caf50, #8bc34a);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(45deg, #ff9800, #ffc107);
+            color: white;
+        }
+        
+        .volume-control {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        
+        .volume-control h4 {
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            color: #aaa;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .volume-slider {
+            width: 100%;
+            height: 6px;
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            outline: none;
+        }
+        
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #e94560;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .info-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .info-label {
+            font-size: 0.75em;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #fff;
+            transition: color 0.3s ease;
+        }
+        
+        .playlist-panel {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .playlist-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .playlist-header h3 {
+            font-size: 1.1em;
+        }
+        
+        .song-count {
+            font-size: 0.85em;
+            color: #aaa;
+        }
+        
+        .song-list {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+        
+        .song-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin-bottom: 5px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .song-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .song-item.active {
+            background: rgba(233, 69, 96, 0.3);
+            border-left: 3px solid #e94560;
+        }
+        
+        .song-index {
+            width: 30px;
+            font-size: 0.85em;
+            color: #aaa;
+            text-align: center;
+        }
+        
+        .song-item.active .song-index {
+            color: #e94560;
+            font-weight: bold;
+        }
+        
+        .song-info {
+            flex: 1;
+            overflow: hidden;
+            margin-left: 10px;
+        }
+        
+        .song-name {
+            font-size: 0.9em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .song-artist {
+            font-size: 0.75em;
+            color: #aaa;
+            margin-top: 2px;
+        }
+        
+        .song-item.active .song-name {
+            color: #e94560;
+            font-weight: bold;
+        }
+        
+        .playing-icon {
+            display: none;
+            color: #e94560;
+            animation: equalizer 0.8s infinite;
+        }
+        
+        .song-item.active .playing-icon {
+            display: block;
+        }
+        
+        @keyframes equalizer {
+            0%, 100% { transform: scaleY(0.5); }
+            50% { transform: scaleY(1); }
+        }
+        
+        .log-container {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: "Courier New", monospace;
+            font-size: 0.8em;
+            margin-top: 15px;
+        }
+        
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .log-time { color: #666; margin-right: 8px; }
+        .log-command { color: #4caf50; }
+        .log-status { color: #2196f3; }
+        .log-error { color: #f44336; }
+        
+        .refresh-info {
+            text-align: center;
+            color: #666;
+            font-size: 0.8em;
+            margin-top: 10px;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .play-mode-selector {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        
+        .play-mode-selector h4 {
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            color: #aaa;
+        }
+        
+        .play-modes {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .play-mode-btn {
+            flex: 1;
+            min-width: 80px;
+            padding: 8px 12px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+            color: #aaa;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.85em;
+        }
+        
+        .play-mode-btn.active {
+            border-color: #e94560;
+            background: rgba(233, 69, 96, 0.2);
+            color: #e94560;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 左侧面板 - 用户歌单 -->
+        <div class="side-panel side-panel-left">
+            <div class="playlist-panel">
+                <div class="playlist-header">
+                    <h3>📀 我的歌单</h3>
+                    <span class="song-count" id="userPlaylistCount">0 个</span>
+                </div>
+                <div class="song-list" id="userPlaylistList">
+                    <div style="text-align: center; color: #aaa; padding: 20px;">
+                        <div class="loading-spinner"></div>
+                        <p style="margin-top: 10px;">加载中...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 主面板 -->
+        <div class="main-panel">
+            <header>
+                <div class="header-top">
+                    <h1>🎵 ncm-cli 音乐控制</h1>
+                    <div class="user-info" id="userInfo">
+                        <span class="loading-spinner"></span>
+                        <span>加载中...</span>
+                    </div>
+                </div>
+                
+                <div class="status-bar">
+                    <div class="status-indicator">
+                        <div class="status-dot" id="statusDot"></div>
+                        <span id="statusText">连接中...</span>
+                    </div>
+                    <div id="lastUpdate">最后更新：--</div>
+                </div>
+            </header>
+            
+            <div class="now-playing">
+                <div class="playlist-info" id="playlistInfo" style="display: none;">
+                    <span>📀</span>
+                    <span id="playlistName">播放列表</span>
+                </div>
+                
+                <div class="song-title" id="songTitle">--</div>
+                
+                <div class="progress-container">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span id="currentTime">0:00</span>
+                        <span id="totalTime">0:00</span>
+                    </div>
+                </div>
+                
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">当前索引</div>
+                        <div class="info-value" id="currentIndex">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">队列歌曲</div>
+                        <div class="info-value" id="queueLength">--</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">播放进度</div>
+                        <div class="info-value" id="playProgress">--</div>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button class="btn btn-secondary" onclick="playPrev()">⏮ 上一首</button>
+                    <button class="btn btn-primary" id="playPauseBtn" onclick="togglePlayPause()">⏯ 播放</button>
+                    <button class="btn btn-secondary" onclick="playNext()">⏭ 下一首</button>
+                    <button class="btn btn-warning" onclick="control('stop')">⏹ 停止</button>
+                </div>
+                
+                <div class="controls">
+                    <button class="btn btn-success" onclick="playFavorites()">❤️ 红心歌单</button>
+                    <button class="btn btn-secondary" onclick="playRecommend()">📅 每日推荐</button>
+                    <button class="btn btn-secondary" onclick="playRadar()">📻 私人雷达</button>
+                </div>
+                
+                <div class="controls">
+                    <button class="btn btn-secondary" onclick="playFM()">📻 私人 FM</button>
+                    <button class="btn btn-secondary" onclick="playHeartbeat()">💓 心动模式</button>
+                </div>
+                
+                <div class="play-mode-selector">
+                    <h4>播放模式</h4>
+                    <div class="play-modes">
+                        <button class="play-mode-btn active" data-mode="order" onclick="setPlayMode('order')">🔁 顺序播放</button>
+                        <button class="play-mode-btn" data-mode="random" onclick="setPlayMode('random')">🔀 随机播放</button>
+                        <button class="play-mode-btn" data-mode="single" onclick="setPlayMode('single')">🔂 单曲循环</button>
+                    </div>
+                </div>
+                
+                <div class="volume-control">
+                    <h4>🔊 音量 <span id="volumeValue">50%</span></h4>
+                    <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="50">
+                </div>
+                
+                <div class="volume-control">
+                    <h4>⚡ 刷新间隔</h4>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="play-mode-btn" onclick="setRefreshInterval(500)" style="flex: 1; min-width: 60px;">0.5 秒</button>
+                        <button class="play-mode-btn active" onclick="setRefreshInterval(1000)" style="flex: 1; min-width: 60px;">1 秒</button>
+                        <button class="play-mode-btn" onclick="setRefreshInterval(2000)" style="flex: 1; min-width: 60px;">2 秒</button>
+                        <button class="play-mode-btn" onclick="setRefreshInterval(5000)" style="flex: 1; min-width: 60px;">5 秒</button>
+                    </div>
+                </div>
+                
+                <div class="log-container" id="logContainer">
+                    <div class="log-entry">
+                        <span class="log-time">[--:--:--]</span>
+                        <span class="log-status">系统就绪，等待操作...</span>
+                    </div>
+                </div>
+                
+                <div class="refresh-info">
+                    后台自动刷新中
+                </div>
+            </div>
+        </div>
+        
+        <!-- 右侧面板 - 播放队列 -->
+        <div class="side-panel side-panel-right">
+            <div class="playlist-panel">
+                <div class="playlist-header">
+                    <h3>🎵 播放队列</h3>
+                    <span class="song-count" id="sideSongCount">0 首</span>
+                </div>
+                <div class="song-list" id="songList">
+                    <div style="text-align: center; color: #aaa; padding: 20px;">
+                        暂无歌曲
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ========== 全局状态 ==========
+        let currentState = null;
+        let currentPlaylist = [];  // 前端维护的播放列表
+        let currentPlayIndex = -1; // 前端维护的当前播放索引
+        let currentPlayMode = 'order';
+        let userInfo = null;
+        let userPlaylists = [];
+        let refreshTimer = null;
+        let isRefreshing = false;
+        let refreshInterval = 1000;
+        let lastFetchTime = 0;
+        const FETCH_DEBOUNCE = 300;
+        
+        // ========== 日志功能 ==========
+        function addLog(message, type = 'status') {
+            const logContainer = document.getElementById('logContainer');
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML = `
+                <span class="log-time">[${timeStr}]</span>
+                <span class="log-${type}">${message}</span>
+            `;
+            
+            logContainer.insertBefore(logEntry, logContainer.firstChild);
+            
+            while (logContainer.children.length > 50) {
+                logContainer.removeChild(logContainer.lastChild);
+            }
+        }
+        
+        // ========== 用户信息 ==========
+        async function fetchUserInfo() {
+            try {
+                const response = await fetch('/user/info');
+                const data = await response.json();
+                
+                if (data.code === 200 && data.data) {
+                    userInfo = data.data;
+                    const userInfoEl = document.getElementById('userInfo');
+                    userInfoEl.innerHTML = `
+                        <img src="${data.data.avatarUrl}" alt="avatar" class="user-avatar" onerror="this.style.display='none'">
+                        <span>${data.data.nickname || '未知用户'}</span>
+                    `;
+                    
+                    fetchUserPlaylists();
+                }
+            } catch (error) {
+                console.log('获取用户信息失败');
+            }
+        }
+        
+        async function fetchUserPlaylists() {
+            try {
+                const response = await fetch('/playlist/collected');
+                const data = await response.json();
+                
+                if (data.code === 200 && data.data) {
+                    userPlaylists = data.data.records || [];
+                    updateUserPlaylistDisplay();
+                }
+            } catch (error) {
+                console.log('获取用户歌单失败');
+            }
+        }
+        
+        function updateUserPlaylistDisplay() {
+            const playlistListEl = document.getElementById('userPlaylistList');
+            const countEl = document.getElementById('userPlaylistCount');
+            
+            countEl.textContent = `${userPlaylists.length} 个`;
+            
+            if (userPlaylists.length === 0) {
+                playlistListEl.innerHTML = '<div style="text-align: center; color: #aaa; padding: 20px;">暂无歌单</div>';
+                return;
+            }
+            
+            playlistListEl.innerHTML = userPlaylists.map((playlist, index) => `
+                <div class="song-item" data-index="${index}" onclick="playUserPlaylist(${index})">
+                    <div class="song-info">
+                        <div class="song-name">${playlist.name || '未知歌单'}</div>
+                        <div class="song-artist">${playlist.trackCount || 0} 首歌曲</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        async function playUserPlaylist(index) {
+            const playlist = userPlaylists[index];
+            if (!playlist) return;
+            
+            try {
+                addLog(`播放歌单：${playlist.name}`, 'command');
+                
+                const response = await fetch('/playlist/play', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        original_id: String(playlist.originalId),
+                        encrypted_id: playlist.id
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.status === 'ok' || data.success) {
+                    addLog(`已播放：${playlist.name}`, 'status');
+                    // 清空本地播放列表，等待刷新
+                    currentPlaylist = [];
+                    currentPlayIndex = -1;
+                    setTimeout(() => fetchQueue(), 1500);
+                } else {
+                    addLog(`播放失败：${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`播放错误：${error.message}`, 'error');
+            }
+        }
+        
+        // ========== 播放状态管理 ==========
+        async function fetchState() {
+            const now = Date.now();
+            
+            if (!isRefreshing && now - lastFetchTime >= FETCH_DEBOUNCE) {
+                isRefreshing = true;
+                lastFetchTime = now;
+                
+                try {
+                    const response = await fetch('/state');
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        currentState = data.state;
+                        updateStatusDisplay(data.state);
+                        updateLastUpdate();
+                        updatePlayPauseBtn();
+                    }
+                } catch (error) {
+                    console.log('获取状态失败:', error);
+                } finally {
+                    isRefreshing = false;
+                }
+            }
+        }
+        
+        async function fetchQueue() {
+            if (isRefreshing) return;
+            
+            try {
+                const response = await fetch('/queue');
+                const data = await response.json();
+
+                if (data.success && data.queue) {
+                    // 更新前端播放列表
+                    currentPlaylist = data.queue.map((song, index) => {
+                        const label = song.label || '';
+                        const parts = label.split(' - ');
+                        let name, artist, songId = '';
+                        
+                        if (parts.length > 1) {
+                            artist = parts[0];
+                            const nameParts = parts.slice(1).join(' - ').split(' | ');
+                            name = nameParts[0] || label;
+                            if (nameParts.length > 1 && nameParts[1].includes('歌曲 ID:')) {
+                                songId = nameParts[1].replace('歌曲 ID:', '').trim();
+                            }
+                        } else {
+                            name = label;
+                            artist = '未知艺术家';
+                        }
+                        
+                        return {
+                            name: name.trim(),
+                            artist: artist.trim(),
+                            encryptedId: songId,
+                            current: song.current || false
+                        };
+                    });
+                    
+                    // 找到当前播放索引
+                    currentPlayIndex = currentPlaylist.findIndex(s => s.current);
+                    
+                    // 更新显示
+                    updateSongList();
+                    updateNowPlaying();
+                }
+            } catch (error) {
+                console.log('获取队列失败');
+            }
+        }
+        
+        function updateStatusDisplay(state) {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            
+            statusDot.className = 'status-dot';
+            
+            if (state.status === 'playing') {
+                statusText.textContent = '播放中';
+                statusDot.classList.remove('stopped', 'paused');
+            } else if (state.status === 'paused') {
+                statusText.textContent = '已暂停';
+                statusDot.classList.add('paused');
+            } else {
+                statusText.textContent = '已停止';
+                statusDot.classList.add('stopped');
+            }
+        }
+        
+        function updateNowPlaying() {
+            const songTitle = document.getElementById('songTitle');
+            const progressFill = document.getElementById('progressFill');
+            const currentTime = document.getElementById('currentTime');
+            const totalTime = document.getElementById('totalTime');
+            const currentIndex = document.getElementById('currentIndex');
+            const queueLength = document.getElementById('queueLength');
+            const playProgress = document.getElementById('playProgress');
+            const playlistInfo = document.getElementById('playlistInfo');
+            
+            // 使用前端维护的索引
+            const song = currentPlayIndex >= 0 ? currentPlaylist[currentPlayIndex] : null;
+            
+            // 更新歌曲标题
+            if (song) {
+                const fullTitle = `${song.name} - ${song.artist}`;
+                if (songTitle.textContent !== fullTitle) {
+                    songTitle.style.opacity = '0';
+                    setTimeout(() => {
+                        songTitle.textContent = fullTitle;
+                        songTitle.style.opacity = '1';
+                    }, 300);
+                }
+            } else if (currentState?.title) {
+                songTitle.textContent = currentState.title;
+            }
+            
+            // 显示播放列表信息
+            if (currentPlaylist.length > 0) {
+                playlistInfo.style.display = 'flex';
+            } else {
+                playlistInfo.style.display = 'none';
+            }
+            
+            // 更新进度条
+            if (currentState?.position && currentState?.duration) {
+                const progress = (currentState.position / currentState.duration) * 100;
+                progressFill.style.width = `${progress}%`;
+                currentTime.textContent = formatTime(currentState.position);
+                totalTime.textContent = formatTime(currentState.duration);
+            } else {
+                progressFill.style.width = '0%';
+                currentTime.textContent = '0:00';
+                totalTime.textContent = '0:00';
+            }
+            
+            // 更新信息卡片
+            const displayIndex = currentPlayIndex >= 0 ? currentPlayIndex + 1 : 0;
+            updateInfoCard(currentIndex, displayIndex, '当前索引');
+            updateInfoCard(queueLength, currentPlaylist.length, '队列歌曲');
+            updateInfoCard(playProgress, `${displayIndex}/${currentPlaylist.length}`, '播放进度');
+            
+            document.getElementById('sideSongCount').textContent = `${currentPlaylist.length} 首`;
+        }
+        
+        function updateInfoCard(element, value, label) {
+            if (element.textContent !== String(value)) {
+                element.style.color = '#e94560';
+                element.textContent = value || '--';
+                setTimeout(() => { element.style.color = '#fff'; }, 300);
+            }
+        }
+        
+        function formatTime(seconds) {
+            if (!seconds) return '0:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        function updateLastUpdate() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = `最后更新：${now.toLocaleTimeString('zh-CN')}`;
+        }
+        
+        function updatePlayPauseBtn() {
+            const btn = document.getElementById('playPauseBtn');
+            if (currentState && currentState.status === 'playing') {
+                btn.textContent = '⏸ 暂停';
+            } else {
+                btn.textContent = '▶ 播放';
+            }
+        }
+        
+        function updateSongList() {
+            const songListEl = document.getElementById('songList');
+            
+            if (currentPlaylist.length === 0) {
+                songListEl.innerHTML = '<div style="text-align: center; color: #aaa; padding: 20px;">暂无歌曲</div>';
+                return;
+            }
+            
+            songListEl.innerHTML = currentPlaylist.map((song, index) => `
+                <div class="song-item ${index === currentPlayIndex ? 'active' : ''}" onclick="playSong(${index})">
+                    <span class="song-index">${index + 1}</span>
+                    <div class="song-info">
+                        <div class="song-name">${song.name}</div>
+                        <div class="song-artist">${song.artist}</div>
+                    </div>
+                    <span class="playing-icon">🎵</span>
+                </div>
+            `).join('');
+            
+            // 滚动到当前播放歌曲
+            const activeItem = songListEl.querySelector('.song-item.active');
+            if (activeItem) {
+                activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+        
+        // ========== 播放控制 ==========
+        async function playSong(index) {
+            const song = currentPlaylist[index];
+            if (!song) {
+                addLog('无法获取歌曲信息', 'error');
+                return;
+            }
+            
+            // 如果有 encryptedId，直接播放
+            if (song.encryptedId) {
+                try {
+                    addLog(`播放：${song.name}`, 'command');
+                    
+                    const response = await fetch('/song/play', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            encrypted_id: song.encryptedId,
+                            index: index
+                        })
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success || data.status === 'ok') {
+                        currentPlayIndex = index;
+                        updateSongList();
+                        updateNowPlaying();
+                        addLog(`已播放：${song.name}`, 'status');
+                        setTimeout(() => fetchQueue(), 1000);
+                    } else {
+                        addLog(`播放失败：${data.error || data.message}`, 'error');
+                    }
+                } catch (error) {
+                    addLog(`播放错误：${error.message}`, 'error');
+                }
+            } else {
+                // 没有 encryptedId，需要搜索获取
+                addLog(`搜索歌曲：${song.name} - ${song.artist}`, 'command');
+                
+                try {
+                    const searchResponse = await fetch(`/search/song?keyword=${encodeURIComponent(song.name + ' ' + song.artist)}`);
+                    const searchData = await searchResponse.json();
+                    
+                    if (searchData.code === 200 && searchData.data && searchData.data.songs && searchData.data.songs.length > 0) {
+                        const foundSong = searchData.data.songs[0];
+                        
+                        // 播放找到的歌曲
+                        const playResponse = await fetch('/song/play', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                encrypted_id: foundSong.id,
+                                original_id: String(foundSong.originalId),
+                                index: index
+                            })
+                        });
+                        const playData = await playResponse.json();
+                        
+                        if (playData.success || playData.status === 'ok') {
+                            currentPlayIndex = index;
+                            // 更新歌曲信息
+                            currentPlaylist[index].encryptedId = foundSong.id;
+                            updateSongList();
+                            updateNowPlaying();
+                            addLog(`已播放：${song.name}`, 'status');
+                            setTimeout(() => fetchQueue(), 1000);
+                        } else {
+                            addLog(`播放失败：${playData.error || playData.message}`, 'error');
+                        }
+                    } else {
+                        addLog('未找到歌曲', 'error');
+                    }
+                } catch (error) {
+                    addLog(`搜索错误：${error.message}`, 'error');
+                }
+            }
+        }
+        
+        async function playPrev() {
+            if (currentPlaylist.length === 0) {
+                addLog('播放队列为空', 'error');
+                return;
+            }
+            
+            // 前端计算上一首索引
+            let newIndex = currentPlayIndex - 1;
+            if (newIndex < 0) {
+                newIndex = currentPlaylist.length - 1; // 循环到最后一首
+            }
+            
+            addLog(`上一首：${newIndex + 1}/${currentPlaylist.length}`, 'command');
+            await playSong(newIndex);
+        }
+        
+        async function playNext() {
+            if (currentPlaylist.length === 0) {
+                addLog('播放队列为空', 'error');
+                return;
+            }
+            
+            // 前端计算下一首索引
+            let newIndex = currentPlayIndex + 1;
+            if (newIndex >= currentPlaylist.length) {
+                newIndex = 0; // 循环到第一首
+            }
+            
+            addLog(`下一首：${newIndex + 1}/${currentPlaylist.length}`, 'command');
+            await playSong(newIndex);
+        }
+        
+        async function togglePlayPause() {
+            const action = currentState?.status === 'playing' ? 'pause' : 'play';
+            await control(action);
+        }
+        
+        async function control(action) {
+            try {
+                addLog(`执行命令：${action}`, 'command');
+
+                const response = await fetch(`/${action}`, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    addLog(`${action}: ${data.message}`, 'status');
+                    setTimeout(() => fetchQueue(), 300);
+                } else {
+                    addLog(`${action} 失败：${data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`命令执行错误：${error.message}`, 'error');
+            }
+        }
+        
+        // ========== 推荐功能 ==========
+        async function playFavorites() {
+            try {
+                addLog('播放红心歌单', 'command');
+                await fetch('/queue/clear', { method: 'POST' });
+                addLog('已清空当前队列', 'status');
+
+                const response = await fetch('/user/favorite/play', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.status === 'ok' || data.success) {
+                    addLog('红心歌单播放成功', 'status');
+                    currentPlaylist = [];
+                    currentPlayIndex = -1;
+                    setTimeout(() => fetchQueue(), 1500);
+                } else {
+                    addLog(`播放失败：${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`播放错误：${error.message}`, 'error');
+            }
+        }
+
+        async function playRecommend() {
+            try {
+                addLog('播放每日推荐', 'command');
+                
+                const response = await fetch('/recommend/daily/play', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.status === 'ok' || data.success) {
+                    addLog('每日推荐播放成功', 'status');
+                    currentPlaylist = [];
+                    currentPlayIndex = -1;
+                    setTimeout(() => fetchQueue(), 1500);
+                } else {
+                    addLog(`播放失败：${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`推荐播放错误：${error.message}`, 'error');
+            }
+        }
+
+        async function playRadar() {
+            try {
+                addLog('播放私人雷达', 'command');
+                
+                const response = await fetch('/playlist/radar');
+                const data = await response.json();
+                
+                if (data.code === 200 && data.data && data.data.length > 0) {
+                    const playlist = data.data[0];
+                    
+                    await fetch('/queue/clear', { method: 'POST' });
+                    addLog('已清空当前队列', 'status');
+                    
+                    const playResponse = await fetch('/playlist/play', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            original_id: String(playlist.originalId),
+                            encrypted_id: playlist.id
+                        })
+                    });
+                    const playData = await playResponse.json();
+                    
+                    if (playData.status === 'ok' || playData.success) {
+                        addLog(`开始播放：${playlist.name}`, 'status');
+                        currentPlaylist = [];
+                        currentPlayIndex = -1;
+                        setTimeout(() => fetchQueue(), 1500);
+                    }
+                }
+            } catch (error) {
+                addLog(`雷达播放错误：${error.message}`, 'error');
+            }
+        }
+
+        async function playFM() {
+            try {
+                addLog('播放私人 FM', 'command');
+                
+                const response = await fetch('/recommend/fm/play', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.status === 'ok' || data.success) {
+                    addLog('私人 FM 播放成功', 'status');
+                    currentPlaylist = [];
+                    currentPlayIndex = -1;
+                    setTimeout(() => fetchQueue(), 1000);
+                } else {
+                    addLog(`播放失败：${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`FM 播放错误：${error.message}`, 'error');
+            }
+        }
+
+        async function playHeartbeat() {
+            try {
+                addLog('播放心动模式', 'command');
+                
+                const currentSong = currentPlayIndex >= 0 ? currentPlaylist[currentPlayIndex] : null;
+                const songId = currentSong?.encryptedId || '';
+                
+                const response = await fetch('/recommend/heartbeat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        song_id: songId,
+                        count: '30'
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.status === 'ok' || data.success) {
+                    addLog('心动模式播放成功', 'status');
+                    currentPlaylist = [];
+                    currentPlayIndex = -1;
+                    setTimeout(() => fetchQueue(), 1500);
+                } else {
+                    addLog(`播放失败：${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`心动模式错误：${error.message}`, 'error');
+            }
+        }
+        
+        // ========== 播放模式 ==========
+        function setPlayMode(mode) {
+            currentPlayMode = mode;
+            
+            document.querySelectorAll('.play-mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === mode);
+            });
+            
+            addLog(`切换播放模式：${mode}`, 'status');
+        }
+        
+        // ========== 刷新控制 ==========
+        function startAutoRefresh() {
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+            }
+            
+            refreshTimer = setInterval(async () => {
+                if (!isRefreshing) {
+                    await fetchState();
+                }
+            }, refreshInterval);
+        }
+        
+        function setRefreshInterval(ms) {
+            refreshInterval = ms;
+            startAutoRefresh();
+            
+            document.querySelectorAll('.play-mode-btn').forEach(btn => {
+                if (btn.textContent.includes('秒')) {
+                    btn.classList.remove('active');
+                }
+            });
+            event.target.classList.add('active');
+            
+            addLog(`刷新间隔已设置为 ${ms}ms`, 'status');
+        }
+        
+        // ========== 音量控制 ==========
+        let volumeTimeout;
+        document.getElementById('volumeSlider').addEventListener('input', function() {
+            document.getElementById('volumeValue').textContent = `${this.value}%`;
+        });
+        
+        document.getElementById('volumeSlider').addEventListener('change', async function() {
+            clearTimeout(volumeTimeout);
+            volumeTimeout = setTimeout(async () => {
+                try {
+                    const response = await fetch(`/volume/${this.value}`, { method: 'POST' });
+                    const data = await response.json();
+                    if (data.success) {
+                        addLog(`音量已设置为 ${this.value}%`, 'status');
+                    }
+                } catch (error) {
+                    addLog(`音量设置错误：${error.message}`, 'error');
+                }
+            }, 300);
+        });
+        
+        // ========== 进度条点击 ==========
+        document.getElementById('progressBar').addEventListener('click', function(e) {
+            if (!currentState || !currentState.duration) return;
+            
+            const rect = this.getBoundingClientRect();
+            const percent = (e.clientX - rect.left) / rect.width;
+            const seconds = Math.floor(percent * currentState.duration);
+            
+            addLog(`跳转到 ${formatTime(seconds)}`, 'command');
+            control(`seek/${seconds}`);
+        });
+        
+        // ========== 初始化 ==========
+        document.addEventListener('DOMContentLoaded', function() {
+            fetchUserInfo();
+            fetchState();
+            fetchQueue();
+            startAutoRefresh();
+            addLog('系统已就绪', 'status');
+        });
+    </script>
+</body>
+</html>
