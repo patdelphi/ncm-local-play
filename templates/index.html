@@ -714,10 +714,10 @@
         async function playUserPlaylist(index) {
             const playlist = userPlaylists[index];
             if (!playlist) return;
-            
+
             try {
                 addLog(`播放歌单：${playlist.name}`, 'command');
-                
+
                 const response = await fetch('/playlist/play', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -727,13 +727,16 @@
                     })
                 });
                 const data = await response.json();
-                
+
                 if (data.status === 'ok' || data.success) {
                     addLog(`已播放：${playlist.name}`, 'status');
                     // 清空本地播放列表，等待刷新
                     currentPlaylist = [];
                     currentPlayIndex = -1;
+                    // 立即刷新一次队列
+                    setTimeout(() => fetchQueue(), 500);
                     setTimeout(() => fetchQueue(), 1500);
+                    setTimeout(() => fetchQueue(), 3000);
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -770,47 +773,32 @@
         
         async function fetchQueue() {
             if (isRefreshing) return;
-            
+
             try {
                 const response = await fetch('/queue');
                 const data = await response.json();
 
                 if (data.success && data.queue) {
-                    // 更新前端播放列表
+                    // 更新前端播放列表 - 直接使用后端返回的 name 和 artist
                     currentPlaylist = data.queue.map((song, index) => {
-                        const label = song.label || '';
-                        const parts = label.split(' - ');
-                        let name, artist, songId = '';
-                        
-                        if (parts.length > 1) {
-                            artist = parts[0];
-                            const nameParts = parts.slice(1).join(' - ').split(' | ');
-                            name = nameParts[0] || label;
-                            if (nameParts.length > 1 && nameParts[1].includes('歌曲 ID:')) {
-                                songId = nameParts[1].replace('歌曲 ID:', '').trim();
-                            }
-                        } else {
-                            name = label;
-                            artist = '未知艺术家';
-                        }
-                        
                         return {
-                            name: name.trim(),
-                            artist: artist.trim(),
-                            encryptedId: songId,
+                            name: song.name || song.label || '未知歌曲',
+                            artist: song.artist || '未知艺术家',
+                            encryptedId: song.encrypted_id || '',
+                            originalId: song.original_id || '',
                             current: song.current || false
                         };
                     });
-                    
+
                     // 找到当前播放索引
                     currentPlayIndex = currentPlaylist.findIndex(s => s.current);
-                    
+
                     // 更新显示
                     updateSongList();
                     updateNowPlaying();
                 }
             } catch (error) {
-                console.log('获取队列失败');
+                console.log('获取队列失败:', error);
             }
         }
         
@@ -944,17 +932,35 @@
         
         // ========== 播放控制 ==========
         async function playSong(index) {
+            // 检查播放列表是否为空
+            if (currentPlaylist.length === 0) {
+                addLog('播放队列为空，请稍后再试', 'error');
+                return;
+            }
+
+            // 检查索引是否有效
+            if (index < 0 || index >= currentPlaylist.length) {
+                addLog(`无效的索引：${index} (队列长度：${currentPlaylist.length})`, 'error');
+                return;
+            }
+
             const song = currentPlaylist[index];
             if (!song) {
                 addLog('无法获取歌曲信息', 'error');
                 return;
             }
-            
+
+            // 检查歌曲信息是否完整
+            if (!song.name || !song.artist) {
+                addLog('歌曲信息不完整', 'error');
+                return;
+            }
+
+            addLog(`点击播放：${song.name} - ${song.artist} (索引：${index})`, 'command');
+
             // 如果有 encryptedId，直接播放
             if (song.encryptedId) {
                 try {
-                    addLog(`播放：${song.name}`, 'command');
-                    
                     const response = await fetch('/song/play', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -964,7 +970,7 @@
                         })
                     });
                     const data = await response.json();
-                    
+
                     if (data.success || data.status === 'ok') {
                         currentPlayIndex = index;
                         updateSongList();
@@ -979,15 +985,19 @@
                 }
             } else {
                 // 没有 encryptedId，需要搜索获取
-                addLog(`搜索歌曲：${song.name} - ${song.artist}`, 'command');
-                
+                const keyword = `${song.name} ${song.artist}`;
+                addLog(`搜索歌曲：${keyword}`, 'command');
+
                 try {
-                    const searchResponse = await fetch(`/search/song?keyword=${encodeURIComponent(song.name + ' ' + song.artist)}`);
+                    const searchResponse = await fetch(`/search/song?keyword=${encodeURIComponent(keyword)}`);
                     const searchData = await searchResponse.json();
-                    
+
+                    // 检查搜索结果
+                    console.log('搜索结果:', searchData);
+
                     if (searchData.code === 200 && searchData.data && searchData.data.songs && searchData.data.songs.length > 0) {
                         const foundSong = searchData.data.songs[0];
-                        
+
                         // 播放找到的歌曲
                         const playResponse = await fetch('/song/play', {
                             method: 'POST',
@@ -999,7 +1009,7 @@
                             })
                         });
                         const playData = await playResponse.json();
-                        
+
                         if (playData.success || playData.status === 'ok') {
                             currentPlayIndex = index;
                             // 更新歌曲信息
@@ -1076,6 +1086,15 @@
         }
         
         // ========== 推荐功能 ==========
+        // 刷新播放列表的辅助函数
+        function refreshPlaylistAfterPlay() {
+            currentPlaylist = [];
+            currentPlayIndex = -1;
+            setTimeout(() => fetchQueue(), 500);
+            setTimeout(() => fetchQueue(), 1500);
+            setTimeout(() => fetchQueue(), 3000);
+        }
+
         async function playFavorites() {
             try {
                 addLog('播放红心歌单', 'command');
@@ -1087,9 +1106,7 @@
 
                 if (data.status === 'ok' || data.success) {
                     addLog('红心歌单播放成功', 'status');
-                    currentPlaylist = [];
-                    currentPlayIndex = -1;
-                    setTimeout(() => fetchQueue(), 1500);
+                    refreshPlaylistAfterPlay();
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1101,15 +1118,13 @@
         async function playRecommend() {
             try {
                 addLog('播放每日推荐', 'command');
-                
+
                 const response = await fetch('/recommend/daily/play', { method: 'POST' });
                 const data = await response.json();
-                
+
                 if (data.status === 'ok' || data.success) {
                     addLog('每日推荐播放成功', 'status');
-                    currentPlaylist = [];
-                    currentPlayIndex = -1;
-                    setTimeout(() => fetchQueue(), 1500);
+                    refreshPlaylistAfterPlay();
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1121,16 +1136,16 @@
         async function playRadar() {
             try {
                 addLog('播放私人雷达', 'command');
-                
+
                 const response = await fetch('/playlist/radar');
                 const data = await response.json();
-                
+
                 if (data.code === 200 && data.data && data.data.length > 0) {
                     const playlist = data.data[0];
-                    
+
                     await fetch('/queue/clear', { method: 'POST' });
                     addLog('已清空当前队列', 'status');
-                    
+
                     const playResponse = await fetch('/playlist/play', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1140,12 +1155,10 @@
                         })
                     });
                     const playData = await playResponse.json();
-                    
+
                     if (playData.status === 'ok' || playData.success) {
                         addLog(`开始播放：${playlist.name}`, 'status');
-                        currentPlaylist = [];
-                        currentPlayIndex = -1;
-                        setTimeout(() => fetchQueue(), 1500);
+                        refreshPlaylistAfterPlay();
                     }
                 }
             } catch (error) {
@@ -1156,15 +1169,13 @@
         async function playFM() {
             try {
                 addLog('播放私人 FM', 'command');
-                
+
                 const response = await fetch('/recommend/fm/play', { method: 'POST' });
                 const data = await response.json();
-                
+
                 if (data.status === 'ok' || data.success) {
                     addLog('私人 FM 播放成功', 'status');
-                    currentPlaylist = [];
-                    currentPlayIndex = -1;
-                    setTimeout(() => fetchQueue(), 1000);
+                    refreshPlaylistAfterPlay();
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1176,10 +1187,10 @@
         async function playHeartbeat() {
             try {
                 addLog('播放心动模式', 'command');
-                
+
                 const currentSong = currentPlayIndex >= 0 ? currentPlaylist[currentPlayIndex] : null;
                 const songId = currentSong?.encryptedId || '';
-                
+
                 const response = await fetch('/recommend/heartbeat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1189,12 +1200,10 @@
                     })
                 });
                 const data = await response.json();
-                
+
                 if (data.status === 'ok' || data.success) {
                     addLog('心动模式播放成功', 'status');
-                    currentPlaylist = [];
-                    currentPlayIndex = -1;
-                    setTimeout(() => fetchQueue(), 1500);
+                    refreshPlaylistAfterPlay();
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }

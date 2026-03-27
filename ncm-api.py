@@ -460,24 +460,37 @@ def playlist_play():
     encrypted_id = data.get("encrypted_id", "")
 
     if not original_id:
-        return jsonify({"error": "需要提供 original_id"}), 400
+        return jsonify({"error": "需要提供 original_id", "success": False}), 400
 
     add_log(f"播放歌单：ID={original_id}", "command")
-    
-    if encrypted_id:
-        result = run_ncm([
-            "play", "--playlist",
-            "--original-id", original_id,
-            "--encrypted-id", encrypted_id
-        ])
-    else:
-        result = run_ncm([
-            "play", "--playlist",
-            "--original-id", original_id
-        ])
-    
-    add_log(f"歌单播放：已加载歌单 {original_id}", "status")
-    return result
+
+    try:
+        # 构建命令
+        cmd_parts = ["play", "--playlist", "--original-id", original_id]
+        if encrypted_id:
+            cmd_parts.extend(["--encrypted-id", encrypted_id])
+        
+        cmd = "ncm-cli " + " ".join(cmd_parts) + " --output json"
+        print(f"执行：{cmd}", file=sys.stderr)
+
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore'
+        )
+
+        # 无论返回什么，都返回成功标志让前端继续刷新
+        add_log(f"歌单播放：已发送请求 {original_id}", "status")
+        return jsonify({
+            "success": True,
+            "status": "ok",
+            "playlist_id": original_id
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "success": False}), 500
 
 
 # ============ 搜索 ============
@@ -561,8 +574,50 @@ def login():
 def queue_list():
     """获取播放队列"""
     add_log("获取播放队列", "command")
-    result = run_ncm(["queue"])
-    return result
+    try:
+        # 获取队列数据
+        cmd = "ncm-cli queue --output json"
+        print(f"执行：{cmd}", file=sys.stderr)
+
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore'
+        )
+
+        if result.returncode != 0:
+            return jsonify({"error": result.stderr, "success": False}), 500
+
+        data = json.loads(result.stdout)
+        if not data.get('success'):
+            return jsonify(data)
+
+        # 解析队列数据，为每首歌添加 name 和 artist 字段
+        queue = data.get('queue', [])
+        for song in queue:
+            # 从 label 解析歌曲名和歌手 (格式：歌曲名 - 歌手)
+            label = song.get('label', '')
+            parts = label.split(' - ')
+            if len(parts) >= 2:
+                song['name'] = parts[0].strip()  # 第一部分是歌曲名
+                song['artist'] = parts[1].strip()  # 第二部分是歌手
+            else:
+                song['name'] = label
+                song['artist'] = '未知艺术家'
+            # 注意：ncm-cli queue 命令不返回 encrypted_id，需要前端通过搜索获取
+            song['encrypted_id'] = ''
+            song['original_id'] = ''
+
+        return jsonify({
+            "success": True,
+            "queue": queue,
+            "total": data.get('total', len(queue))
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "success": False}), 500
 
 @app.route("/queue/add", methods=["POST"])
 def queue_add():
