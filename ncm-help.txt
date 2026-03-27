@@ -1,0 +1,35 @@
+Usage: ncm-cli [options] [command]
+
+网易云音乐 CLI 工具 - 支持音乐播放、搜索、歌单管理
+
+Options:
+  -V, --version                       output the version number
+  --output <format>                   输出格式 (human|json) (default: "json")
+  -h, --help                          display help for command
+
+Commands:
+  play [options]                      播放音频 URL、歌曲加密 ID 或歌单
+  pause [options]                     暂停播放
+  resume [options]                    恢复播放
+  stop [options]                      停止播放
+  next [options]                      下一首
+  prev [options]                      上一首
+  seek [options] <seconds>            跳转到指定时间（秒）
+  volume [options] <level>            设置音量 (0-100)
+  queue [options] [subcommand] [url]  播放队列管理（queue | queue add <url/id> | queue
+                                      clear）
+  state [options]                     查看播放状态
+  login [options]                     登录网易云音乐
+  logout [options]                    退出登录
+  tui                                 启动终端 UI 播放器（黑胶动画、歌词、播放列表）
+  configure                           交互式配置向导：设置 API 凭证和播放器
+  upgrade                             升级到最新版本
+  config                              配置管理（config set/get/list）
+  commands                            列出所有可用命令
+  album                               专辑相关命令
+  playlist                            歌单相关命令
+  recommend                           推荐相关命令
+  search                              搜索命令（歌曲、专辑、歌单、综合）
+  song                                歌曲相关命令
+  user                                用户相关命令
+  help [command]                      display help for command

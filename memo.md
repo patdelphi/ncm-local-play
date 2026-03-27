@@ -1,0 +1,83 @@
+## Qwen Added Memories
+- 用户已安装 ncm-cli 和 mpv 播放器，使用 ncm-api.py 通过 Flask 提供 HTTP 接口远程控制网易云音乐播放
+
+请把各种场景调用服务的方法示例，都写在Python注释中，方便用户了解。
+
+另外还要讲清楚配置方法，需要安装：
+npm install -g @music163/ncm-cli
+winget install "mpv (shinchiro build)"  #win，还需要设置path至mpv.exe
+apt install mpv #linux
+
+内网运行 python ncm-api.py
+如果需要内网穿透，还需要运行 cloudflared tunnel --url http://localhost:8765
+
+
+C:\Users\patde\Documents\Github\ncm-local>ncm-cli commands
+play                      播放音频 URL、歌曲加密 ID 或歌单
+  --playlist            歌单模式：顺序播放整个歌单（需配合 --encrypted-id 或 --original-id 提供歌单 ID）
+  --song                歌曲模式：播放单曲（需配合 --encrypted-id 与 --original-id 提供歌曲 ID）
+  --encrypted-id        资源加密 ID（歌曲为32位hex，歌单为数字ID）
+  --original-id         资源原始 ID（歌曲为明文数字ID，歌单为数字ID）
+
+pause                     暂停播放
+resume                    恢复播放
+stop                      停止播放
+next                      下一首
+prev                      上一首
+seek <seconds>            跳转到指定时间（秒）
+volume <level>            设置音量 (0-100)
+queue [subcommand] [url]  播放队列管理（queue | queue add <url/id> | queue clear）
+  --encrypted-id        资源加密 ID（歌曲为32位hex）
+  --original-id         资源原始 ID（歌曲为明文数字ID）
+  --next                插入到当前播放的下一首位置（默认追加到队列末尾）
+
+state                     查看播放状态
+login                     登录网易云音乐
+  --check               检查登录状态
+  --background          后台轮询模式，主进程立即退出
+
+logout                    退出登录
+configure                 交互式配置向导：设置 API 凭证和播放器
+upgrade                   升级到最新版本
+config                    配置管理（config set/get/list）
+  set                   设置配置项
+  get                   获取配置项
+  list                  列出所有配置项
+
+album                     专辑相关命令
+  get                   获取专辑详情
+  tracks                获取专辑歌曲列表
+
+playlist                  歌单相关命令
+  add                   向歌单批量添加歌曲
+  collected             获取我收藏的歌单列表
+  create                创建歌单
+  created               获取我创建的歌单列表
+  get                   获取歌单详情
+  radar                 获取雷达歌单
+  remove                从歌单批量删除歌曲
+  tracks                获取歌单歌曲列表
+
+recommend                 推荐相关命令
+  daily                 获取每日推荐歌曲
+  fm                    场景私人漫游
+  heartbeat             心动模式（基于当前歌曲推荐）
+
+search                    搜索命令（歌曲、专辑、歌单、综合）
+  album                 搜索专辑
+  all                   综合搜索（歌曲、歌单、专辑、艺人）
+  playlist              搜索歌单
+  song                  搜索歌曲
+
+song                      歌曲相关命令
+  dislike               取消红心歌曲
+  like                  红心歌曲
+  lyric                 获取歌曲歌词（逐行歌词、翻译歌词、非滚动歌词）
+
+user                      用户相关命令
+  favorite              获取我的红心歌单
+  history               获取最近播放歌曲列表
+  info                  获取用户基本信息
+  listen-ranking        听歌排行
+
+
