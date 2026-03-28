@@ -29,9 +29,19 @@ config                    配置管理（config set/get/list）
   get                   获取配置项
   list                  列出所有配置项
 
+cloudupload               云盘上传（cloudupload / cloudupload status）
+  upload                上传文件或目录到云盘（支持多个路径）
+  status                查询后台上传任务进度
+  stop                  停止运行中的后台上传任务
+  list                  列出所有后台上传任务
+
 album                     专辑相关命令
   get                   获取专辑详情
   tracks                获取专辑歌曲列表
+
+cloud                     网盘相关命令
+  list                  获取网盘歌曲列表（游标分页）
+  updateSort            更新网盘歌曲排序
 
 playlist                  歌单相关命令
   add                   向歌单批量添加歌曲
