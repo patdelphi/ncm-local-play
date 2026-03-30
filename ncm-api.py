@@ -1100,6 +1100,7 @@ def play_heartbeat():
     """
     data = request.json or {}
     song_id = data.get("song_id", "")
+    playlist_id = data.get("playlist_id", "")
     count = data.get("count", "20")
     
     add_log(f"播放心动模式 (song_id={song_id[:8] if song_id else ''}...)", "command")
@@ -1171,6 +1172,8 @@ def play_heartbeat():
             return jsonify({"error": "心动模式需要 song_id（歌曲加密ID）", "success": False, "debug": debug}), 400
 
         cmd = ["recommend", "heartbeat", "--songId", str(resolved_encrypted_id), "--count", str(count)]
+        if playlist_id:
+            cmd.extend(["--playlistId", str(playlist_id)])
         returncode, stdout, stderr = run_ncm_raw(cmd, "json")
         if returncode != 0:
             add_log(f"获取心动模式失败：{stderr.strip()}", "error")

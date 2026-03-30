@@ -1476,9 +1476,9 @@
             try {
                 const currentSong = currentPlayIndex >= 0 ? currentPlaylist[currentPlayIndex] : null;
                 const songId = currentSong?.encryptedId || '';
-                await stopAndResetBeforeLoad('心动模式');
                 addLog('播放心动模式', 'command');
 
+                // 先获取推荐（不要提前 stop，否则后端无法从 queue/session 获取当前歌曲 ID）
                 const response = await fetch('/recommend/heartbeat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1490,6 +1490,7 @@
                 const data = await response.json();
 
                 if (apiIsSuccess(data)) {
+                    resetPlaylistUI();
                     addLog('心动模式播放成功', 'status');
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
                         sessionActive = true;
