@@ -847,22 +847,14 @@
 
                 if (apiIsSuccess(data)) {
                     addLog(`已播放：${playlist.name}`, 'status');
+                    sessionActive = true;
+                    sessionSourceName = String(playlist.name || '');
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
-                        sessionActive = true;
-                        sessionSourceName = String(playlist.name || '');
-                        queueAutoRefreshEnabled = false;
                         applySessionEntries(data.entries, data.index || 0);
-                    } else {
-                        sessionActive = false;
-                        queueAutoRefreshEnabled = true;
                     }
-                    if (data.mode === 'playlist') {
-                        addLog(data.warning || '已切换为歌单模式播放（队列可能为空）', 'status');
-                        setTimeout(() => fetchState(), 300);
-                        setTimeout(() => fetchQueue(), 600);
-                    } else {
-                        setTimeout(() => fetchState(), 300);
-                    }
+                    setTimeout(() => fetchQueue(), 1500);
+                    setTimeout(() => fetchQueue(), 3000);
+                    setTimeout(() => fetchState(), 300);
                 } else {
                     const attempts = Array.isArray(data.attempts) ? data.attempts : [];
                     const stderr = attempts.map(a => a.stderr).find(Boolean) || data.stderr || '';
@@ -924,20 +916,6 @@
 
                 sessionActive = true;
                 sessionSourceName = data.source_name || sessionSourceName || '';
-                const newIndex = typeof data.index === 'number' ? data.index : -1;
-                if (newIndex >= 0 && newIndex !== currentPlayIndex) {
-                    currentPlayIndex = newIndex;
-                    updateSongList();
-                    updateNowPlaying();
-                }
-
-                if (currentPlaylist.length === 0) {
-                    const plResp = await fetch('/session/playlist');
-                    const plData = await plResp.json();
-                    if (plData.success && Array.isArray(plData.entries)) {
-                        applySessionEntries(plData.entries, plData.index || 0);
-                    }
-                }
             } catch (e) {}
         }
         
@@ -996,8 +974,6 @@
 
         async function fetchQueue() {
             if (isFetchingQueue) return;
-            if (sessionActive) return;
-            if (!queueAutoRefreshEnabled) return;
             isFetchingQueue = true;
 
             try {
@@ -1358,16 +1334,14 @@
 
                 if (apiIsSuccess(data)) {
                     addLog('红心歌单播放成功', 'status');
+                    sessionActive = true;
+                    sessionSourceName = '红心歌单';
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
-                        sessionActive = true;
-                        sessionSourceName = '红心歌单';
-                        queueAutoRefreshEnabled = false;
                         applySessionEntries(data.entries, data.index || 0);
-                        setTimeout(() => fetchState(), 300);
-                    } else {
-                        sessionActive = false;
-                        refreshPlaylistAfterPlay();
                     }
+                    setTimeout(() => fetchState(), 300);
+                    setTimeout(() => fetchQueue(), 1500);
+                    setTimeout(() => fetchQueue(), 3000);
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1386,15 +1360,14 @@
 
                 if (apiIsSuccess(data)) {
                     addLog('每日推荐播放成功', 'status');
+                    sessionActive = true;
+                    sessionSourceName = '每日推荐';
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
-                        sessionActive = true;
-                        queueAutoRefreshEnabled = false;
                         applySessionEntries(data.entries, data.index || 0);
-                        setTimeout(() => fetchState(), 300);
-                        setTimeout(() => fetchSessionStatus(), 350);
-                    } else {
-                        refreshPlaylistAfterPlay();
                     }
+                    setTimeout(() => fetchState(), 300);
+                    setTimeout(() => fetchQueue(), 1500);
+                    setTimeout(() => fetchQueue(), 3000);
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1426,16 +1399,14 @@
 
                     if (apiIsSuccess(playData)) {
                         addLog(`开始播放：${playlist.name}`, 'status');
+                        sessionActive = true;
+                        sessionSourceName = String(playlist.name || '');
                         if (playData.mode === 'session' && Array.isArray(playData.entries)) {
-                            sessionActive = true;
-                            sessionSourceName = String(playlist.name || '');
-                            queueAutoRefreshEnabled = false;
                             applySessionEntries(playData.entries, playData.index || 0);
-                            setTimeout(() => fetchState(), 300);
-                        } else {
-                            sessionActive = false;
-                            refreshPlaylistAfterPlay();
                         }
+                        setTimeout(() => fetchState(), 300);
+                        setTimeout(() => fetchQueue(), 1500);
+                        setTimeout(() => fetchQueue(), 3000);
                     } else {
                         addLog(`播放失败：${apiMessage(playData) || '未知错误'}`, 'error');
                     }
@@ -1455,15 +1426,14 @@
 
                 if (apiIsSuccess(data)) {
                     addLog('私人 FM 播放成功', 'status');
+                    sessionActive = true;
+                    sessionSourceName = '私人 FM';
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
-                        sessionActive = true;
-                        queueAutoRefreshEnabled = false;
                         applySessionEntries(data.entries, data.index || 0);
-                        setTimeout(() => fetchState(), 300);
-                        setTimeout(() => fetchSessionStatus(), 350);
-                    } else {
-                        refreshPlaylistAfterPlay();
                     }
+                    setTimeout(() => fetchState(), 300);
+                    setTimeout(() => fetchQueue(), 1500);
+                    setTimeout(() => fetchQueue(), 3000);
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1492,15 +1462,14 @@
                 if (apiIsSuccess(data)) {
                     resetPlaylistUI();
                     addLog('心动模式播放成功', 'status');
+                    sessionActive = true;
+                    sessionSourceName = '心动模式';
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
-                        sessionActive = true;
-                        queueAutoRefreshEnabled = false;
                         applySessionEntries(data.entries, data.index || 0);
-                        setTimeout(() => fetchState(), 300);
-                        setTimeout(() => fetchSessionStatus(), 350);
-                    } else {
-                        refreshPlaylistAfterPlay();
                     }
+                    setTimeout(() => fetchState(), 300);
+                    setTimeout(() => fetchQueue(), 1500);
+                    setTimeout(() => fetchQueue(), 3000);
                 } else {
                     const dbg = data.debug && Array.isArray(data.debug.steps) ? data.debug.steps : null;
                     const dbgText = dbg ? ` (${dbg.map(s => s.step).join(' > ')})` : '';
