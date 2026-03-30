@@ -16,7 +16,7 @@
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
             min-height: 100vh;
             color: #fff;
-            padding: 20px;
+            padding: 10px;
         }
         
         .container {
@@ -24,7 +24,7 @@
             margin: 0 auto;
             display: grid;
             grid-template-columns: 300px 1fr 400px;
-            gap: 20px;
+            gap: 10px;
         }
         
         .side-panel {
@@ -65,21 +65,21 @@
         .main-panel {
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 10px;
         }
         
         header {
             background: rgba(255, 255, 255, 0.1);
-            border-radius: 15px;
-            padding: 20px;
+            border-radius: 12px;
+            padding: 12px 15px;
             backdrop-filter: blur(10px);
         }
-        
+
         .header-top {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 15px;
+            margin-bottom: 8px;
         }
         
         h1 {
@@ -139,8 +139,8 @@
         
         .now-playing {
             background: rgba(255, 255, 255, 0.1);
-            border-radius: 15px;
-            padding: 25px;
+            border-radius: 12px;
+            padding: 15px;
             backdrop-filter: blur(10px);
         }
         
@@ -156,14 +156,14 @@
         }
         
         .song-title {
-            font-size: 1.6em;
+            font-size: 1.4em;
             font-weight: bold;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
             transition: opacity 0.3s ease;
         }
-        
+
         .progress-container {
-            margin: 20px 0;
+            margin: 10px 0;
         }
         
         .progress-bar {
@@ -193,8 +193,8 @@
         .controls {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            gap: 10px;
-            margin-top: 20px;
+            gap: 8px;
+            margin-top: 10px;
         }
         
         .btn {
@@ -237,13 +237,13 @@
         
         .volume-control {
             background: rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 15px;
-            margin-top: 15px;
+            border-radius: 10px;
+            padding: 10px;
+            margin-top: 10px;
         }
-        
+
         .volume-control h4 {
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             font-size: 0.9em;
             color: #aaa;
             display: flex;
@@ -272,14 +272,14 @@
         .info-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-            margin-top: 15px;
+            gap: 8px;
+            margin-top: 10px;
         }
-        
+
         .info-item {
             background: rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-            padding: 12px;
+            border-radius: 8px;
+            padding: 8px;
             text-align: center;
         }
         
@@ -400,13 +400,13 @@
         
         .log-container {
             background: rgba(0, 0, 0, 0.3);
-            border-radius: 12px;
-            padding: 12px;
-            max-height: 150px;
+            border-radius: 10px;
+            padding: 10px;
+            max-height: 100px;
             overflow-y: auto;
             font-family: "Courier New", monospace;
             font-size: 0.8em;
-            margin-top: 15px;
+            margin-top: 10px;
         }
         
         .log-entry {
@@ -435,6 +435,32 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
+
+        .login-banner {
+            display: none;
+            background: linear-gradient(135deg, #e94560, #c0392b);
+            border-radius: 12px;
+            padding: 15px 20px;
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .login-banner code {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: "Courier New", monospace;
+        }
+
+        .shortcut-hint {
+            position: fixed;
+            bottom: 10px;
+            right: 15px;
+            font-size: 0.7em;
+            color: #555;
+        }
         
         @keyframes spin {
             to { transform: rotate(360deg); }
@@ -442,13 +468,13 @@
         
         .play-mode-selector {
             background: rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 15px;
-            margin-top: 15px;
+            border-radius: 10px;
+            padding: 10px;
+            margin-top: 10px;
         }
-        
+
         .play-mode-selector h4 {
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             font-size: 0.9em;
             color: #aaa;
         }
@@ -499,6 +525,9 @@
         
         <!-- 主面板 -->
         <div class="main-panel">
+            <div class="login-banner" id="loginBanner">
+                ⚠️ 未登录，请在终端执行 <code>ncm-cli login</code> 扫码登录后刷新页面
+            </div>
             <header>
                 <div class="header-top">
                     <h1>🎵 ncm-cli 音乐控制</h1>
@@ -578,7 +607,7 @@
                 </div>
                 
                 <div class="volume-control">
-                    <h4>🔊 音量 <span id="volumeValue">50%</span></h4>
+                    <h4>🔊 音量 <span id="volumeValue">--%</span></h4>
                     <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="50">
                 </div>
                 
@@ -620,7 +649,7 @@
             </div>
         </div>
     </div>
-    
+    <div class="shortcut-hint">Space 播放/暂停 | ← → 切歌 | ↑ ↓ 音量 | Esc 停止</div>
     <script>
         // ========== 全局状态 ==========
         let currentState = null;
@@ -725,10 +754,12 @@
                 const data = await response.json();
 
                 if (data.logged_in) {
+                    document.getElementById('loginBanner').style.display = 'none';
                     return true;
                 }
 
-                addLog('未登录，请先在终端执行：ncm-cli login', 'error');
+                document.getElementById('loginBanner').style.display = 'block';
+                addLog('未登录，请在终端执行：ncm-cli login', 'error');
                 return false;
             } catch (error) {
                 addLog(`登录状态检查失败：${error.message}`, 'error');
@@ -862,6 +893,13 @@
                             updateStatusDisplay(state);
                             updateLastUpdate();
                             updatePlayPauseBtn();
+                            if (state.volume !== undefined && state.volume !== null) {
+                                const vol = Math.round(Number(state.volume));
+                                const slider = document.getElementById('volumeSlider');
+                                const valueEl = document.getElementById('volumeValue');
+                                if (slider && !slider.matches(':active')) slider.value = String(vol);
+                                if (valueEl) valueEl.textContent = `${vol}%`;
+                            }
                         }
                     }
                 } catch (error) {
@@ -1562,21 +1600,54 @@
                 }
             });
             resetPlaylistUI();
-            try {
-                const vol = 50;
-                const slider = document.getElementById('volumeSlider');
-                if (slider) slider.value = String(vol);
-                const valueEl = document.getElementById('volumeValue');
-                if (valueEl) valueEl.textContent = `${vol}%`;
-                fetch(`/volume/${vol}`, { method: 'POST' })
-                    .then(r => r.json())
-                    .then(d => { if (!apiIsSuccess(d)) addLog(`音量初始化失败：${apiMessage(d) || '未知错误'}`, 'error'); })
-                    .catch(e => addLog(`音量初始化错误：${e.message}`, 'error'));
-            } catch (e) {}
             fetchState();
             fetchSessionStatus();
             startAutoRefresh();
             addLog('系统已就绪', 'status');
+        });
+
+        // ========== 键盘快捷键 ==========
+        document.addEventListener('keydown', function(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            switch (e.code) {
+                case 'Space':
+                    e.preventDefault();
+                    togglePlayPause();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    playPrev();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    playNext();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    {
+                        const slider = document.getElementById('volumeSlider');
+                        const newVol = Math.min(100, parseInt(slider.value) + 5);
+                        slider.value = newVol;
+                        document.getElementById('volumeValue').textContent = `${newVol}%`;
+                        fetch(`/volume/${newVol}`, { method: 'POST' }).catch(() => {});
+                    }
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    {
+                        const slider = document.getElementById('volumeSlider');
+                        const newVol = Math.max(0, parseInt(slider.value) - 5);
+                        slider.value = newVol;
+                        document.getElementById('volumeValue').textContent = `${newVol}%`;
+                        fetch(`/volume/${newVol}`, { method: 'POST' }).catch(() => {});
+                    }
+                    break;
+                case 'Escape':
+                    e.preventDefault();
+                    control('stop');
+                    break;
+            }
         });
     </script>
 </body>

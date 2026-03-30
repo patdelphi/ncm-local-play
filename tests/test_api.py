@@ -180,8 +180,8 @@ class ApiTests(unittest.TestCase):
         tracks_json = {
             "code": 200,
             "data": [
-                {"id": "enc1", "originalId": 1, "name": "n1", "artists": [{"name": "a1"}]},
-                {"id": "enc2", "originalId": 2, "name": "n2", "artists": [{"name": "a2"}]},
+                {"id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "originalId": 1, "name": "n1", "artists": [{"name": "a1"}]},
+                {"id": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "originalId": 2, "name": "n2", "artists": [{"name": "a2"}]},
             ],
         }
         current_title = {"value": ""}
@@ -195,9 +195,9 @@ class ApiTests(unittest.TestCase):
                 if "--encrypted-id" in cmd:
                     idx = cmd.index("--encrypted-id")
                     eid = cmd[idx + 1]
-                    if eid == "enc1":
+                    if eid == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA":
                         current_title["value"] = "n1 - a1"
-                    elif eid == "enc2":
+                    elif eid == "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB":
                         current_title["value"] = "n2 - a2"
                 return _FakeCompletedProcess(returncode=0, stdout=json.dumps({"success": True, "message": "playing"}), stderr="")
             return _FakeCompletedProcess(returncode=0, stdout=json.dumps({"success": True}), stderr="")
@@ -219,7 +219,7 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(resp_next.get_json()["success"])
 
     def test_session_play_returns_error_when_play_fails(self):
-        tracks_json = {"code": 200, "data": [{"id": "enc1", "originalId": 1}, {"id": "enc2", "originalId": 2}]}
+        tracks_json = {"code": 200, "data": [{"id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "originalId": 1}, {"id": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "originalId": 2}]}
 
         def fake_run(cmd, capture_output, text, encoding, errors):
             if "playlist" in cmd and "tracks" in cmd:
@@ -241,7 +241,7 @@ class ApiTests(unittest.TestCase):
         with self.mod.session_lock:
             self.mod.session_state["active"] = True
             self.mod.session_state["playlist_id"] = "p"
-            self.mod.session_state["entries"] = [{"encrypted_id": "enc1", "original_id": "1", "name": "n1", "artist": "a1"}]
+            self.mod.session_state["entries"] = [{"encrypted_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "original_id": "1", "name": "n1", "artist": "a1"}]
             self.mod.session_state["index"] = -1
 
         def fake_run(cmd, capture_output, text, encoding, errors):

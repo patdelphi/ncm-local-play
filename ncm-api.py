@@ -588,6 +588,10 @@ def session_play_index(index):
                 except Exception:
                     pass
 
+    if not is_hex_32(str(encrypted_id)):
+        song_label = entry.get("name") or encrypted_id
+        return jsonify({"success": False, "error": f"无法解析歌曲ID：{song_label}"}), 400
+
     expected_title = ""
     if entry.get("name") and entry.get("artist"):
         expected_title = f"{entry.get('name')} - {entry.get('artist')}"
