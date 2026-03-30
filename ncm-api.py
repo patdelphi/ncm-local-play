@@ -627,6 +627,30 @@ def session_play_index(index):
 def session_status():
     snap = session_get_snapshot()
     payload = {k: snap[k] for k in ("active", "playlist_id", "index", "total")}
+
+    # 通过 state title 同步真实播放位置
+    if snap["active"] and snap["entries"]:
+        state_snap = read_state_snapshot()
+        if state_snap and state_snap.get("title"):
+            title = state_snap["title"]
+            matched_index = -1
+            for i, entry in enumerate(snap["entries"]):
+                entry_title = ""
+                if entry.get("name") and entry.get("artist"):
+                    entry_title = f"{entry['name']} - {entry['artist']}"
+                elif entry.get("name"):
+                    entry_title = entry["name"]
+                if entry_title and entry_title == title:
+                    matched_index = i
+                    break
+                if entry.get("name") and entry["name"] in title:
+                    matched_index = i
+                    break
+            if matched_index >= 0 and matched_index != snap["index"]:
+                with session_lock:
+                    session_state["index"] = matched_index
+                payload["index"] = matched_index
+
     if isinstance(snap.get("source"), dict):
         payload["source_type"] = snap["source"].get("type")
         payload["source_name"] = snap["source"].get("name")
@@ -1142,12 +1166,39 @@ def play_heartbeat():
                     label = (cur.get("label") or "") if isinstance(cur, dict) else ""
                     m = re.search(r"歌曲 ID:\s*([0-9A-Fa-f]{32})", label)
                     hex_id = m.group(1) if m else ""
+                    if not hex_id and label:
+                        # queue label 格式为 "歌名 - 歌手"，尝试通过搜索解析
+                        parts = label.rsplit(' - ', 1)
+                        q_name = parts[0].strip() if parts else label
+                        q_artist = parts[1].strip() if len(parts) == 2 else ""
+                        resolved = resolve_song_ids(q_name, q_artist)
+                        if isinstance(resolved, dict) and resolved.get("encrypted_id") and is_hex_32(str(resolved.get("encrypted_id"))):
+                            hex_id = str(resolved.get("encrypted_id"))
+                            debug["steps"].append({"step": "queue_label_resolved", "name": q_name, "artist": q_artist, "hex": hex_id})
                     resolved_encrypted_id = hex_id or ""
-                    debug["steps"].append({"step": "queue_label", "found": bool(m), "hex": hex_id})
+                    if not hex_id:
+                        debug["steps"].append({"step": "queue_label", "found": False, "label": label})
+                    else:
+                        debug["steps"].append({"step": "queue_label", "found": True, "hex": hex_id})
                 except Exception:
                     debug["steps"].append({"step": "queue_parse_failed"})
             else:
                 debug["steps"].append({"step": "queue_failed", "returncode": qrcode, "stderr": (qstderr or "").strip()})
+
+        if not resolved_encrypted_id:
+            # 从 state title 解析
+            state_snap = read_state_snapshot()
+            if state_snap and state_snap.get("title"):
+                title = state_snap["title"]
+                parts = title.rsplit(' - ', 1)
+                s_name = parts[0].strip() if parts else title
+                s_artist = parts[1].strip() if len(parts) == 2 else ""
+                resolved = resolve_song_ids(s_name, s_artist)
+                if isinstance(resolved, dict) and resolved.get("encrypted_id") and is_hex_32(str(resolved.get("encrypted_id"))):
+                    resolved_encrypted_id = str(resolved.get("encrypted_id"))
+                    debug["steps"].append({"step": "state_title_resolved", "name": s_name, "artist": s_artist, "hex": resolved_encrypted_id})
+                else:
+                    debug["steps"].append({"step": "state_title_resolve_failed", "title": title})
 
         if not resolved_encrypted_id:
             returncode, hstdout, hstderr = run_ncm_raw(["user", "history"], "json")
