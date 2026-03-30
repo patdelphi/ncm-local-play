@@ -699,16 +699,32 @@ def session_next():
     snap = session_get_snapshot()
     if not snap["active"]:
         return jsonify({"success": False, "error": "session 未激活"}), 400
+    before = read_state_snapshot()
+    before_title = before.get("title") if isinstance(before, dict) else ""
+    data, err = try_ncm_json(["next"])
+    if err:
+        message = err.get("stderr") or err.get("error") or "切歌失败"
+        return jsonify({"success": False, "message": message, "error": message, **err}), 500
     next_index = min(snap["index"] + 1, snap["total"] - 1) if snap["total"] > 0 else -1
-    return session_play_index(next_index)
+    with session_lock:
+        session_state["index"] = next_index
+    return jsonify({"success": True, "applied": True, "index": next_index, "raw": data})
 
 @app.route("/session/prev", methods=["POST"])
 def session_prev():
     snap = session_get_snapshot()
     if not snap["active"]:
         return jsonify({"success": False, "error": "session 未激活"}), 400
+    before = read_state_snapshot()
+    before_title = before.get("title") if isinstance(before, dict) else ""
+    data, err = try_ncm_json(["prev"])
+    if err:
+        message = err.get("stderr") or err.get("error") or "切歌失败"
+        return jsonify({"success": False, "message": message, "error": message, **err}), 500
     prev_index = max(snap["index"] - 1, 0) if snap["total"] > 0 else -1
-    return session_play_index(prev_index)
+    with session_lock:
+        session_state["index"] = prev_index
+    return jsonify({"success": True, "applied": True, "index": prev_index, "raw": data})
 
 @app.route("/queue/fill/status", methods=["GET"])
 def queue_fill_status():
@@ -1252,7 +1268,6 @@ def user_favorite():
 def play_user_favorite():
     """播放用户红心歌单"""
     add_log("播放红心歌单", "command")
-    # 先获取红心歌单信息
     try:
         returncode, stdout, stderr = run_ncm_raw(["user", "favorite"], "json")
         if returncode != 0:
@@ -1262,46 +1277,40 @@ def play_user_favorite():
         data = json.loads(stdout)
         original_id = data.get('data', {}).get('originalId', '')
         encrypted_id = data.get('data', {}).get('id', '')
-        
-        if not original_id or not encrypted_id:
+
+        if not original_id and not encrypted_id:
             add_log("获取红心歌单 ID 失败", "error")
             return jsonify({"error": "获取红心歌单 ID 失败"}), 500
 
-        song_entries, err = load_playlist_song_ids(original_id, encrypted_id)
-        if err:
-            ok, detail = try_play_playlist(original_id=original_id, encrypted_id=encrypted_id)
-            if ok:
-                add_log("红心歌单：无法获取曲目列表，已切换为歌单模式播放", "status")
-                return jsonify({
-                    "success": True,
-                    "status": "ok",
-                    "mode": "playlist",
-                    "playlist_id": str(original_id) if original_id else str(encrypted_id),
-                    "warning": "无法获取歌单曲目列表，已使用 ncm-cli 歌单模式播放；队列展示可能为空",
-                    "attempts": err.get("attempts", []),
-                    "play_attempts": detail.get("attempts", []),
-                })
-
-            add_log(f"红心歌单加载失败：{err.get('error')}", "error")
-            return jsonify({"success": False, **err}), 500
-
-        session_set_playlist(encrypted_id or original_id, song_entries, 0, {"type": "favorite", "name": "红心歌单", "id": str(encrypted_id or original_id)})
-        first = song_entries[0] if song_entries else None
-        if not first:
-            return jsonify({"success": False, "error": "歌单为空"}), 500
-        ok, payload = play_song_checked(first.get("encrypted_id"), first.get("original_id") or "")
+        # 先用 play --playlist 启动播放
+        ok, detail = try_play_playlist(original_id=original_id, encrypted_id=encrypted_id)
         if not ok:
-            return jsonify({"success": False, **payload}), 500
-        add_log(f"红心歌单：已加载 {len(song_entries)} 首", "status")
-        return jsonify({
-            "success": True,
-            "status": "ok",
-            "mode": "session",
-            "playlist_id": str(encrypted_id or original_id),
-            "song_count": len(song_entries),
-            "index": 0,
-            "entries": song_entries,
-        })
+            add_log("红心歌单播放失败", "error")
+            return jsonify({"success": False, "error": "红心歌单播放失败", "attempts": detail.get("attempts", [])}), 500
+
+        # 加载 entries 用于 UI 展示
+        song_entries, err = load_playlist_song_ids(original_id, encrypted_id)
+        if song_entries:
+            session_set_playlist(encrypted_id or original_id, song_entries, 0, {"type": "favorite", "name": "红心歌单", "id": str(encrypted_id or original_id)})
+            add_log(f"红心歌单：已加载 {len(song_entries)} 首", "status")
+            return jsonify({
+                "success": True,
+                "status": "ok",
+                "mode": "session",
+                "playlist_id": str(encrypted_id or original_id),
+                "song_count": len(song_entries),
+                "index": 0,
+                "entries": song_entries,
+            })
+        else:
+            add_log("红心歌单：已启动播放，但无法获取曲目列表", "status")
+            return jsonify({
+                "success": True,
+                "status": "ok",
+                "mode": "playlist",
+                "playlist_id": str(original_id) if original_id else str(encrypted_id),
+                "warning": "已启动歌单播放，但无法获取曲目列表用于 UI 展示",
+            })
     except Exception as e:
         add_log(f"播放红心歌单失败：{str(e)}", "error")
         return jsonify({"error": str(e)}), 500
@@ -1323,7 +1332,7 @@ def playlist_radar():
 def playlist_play():
     """
     播放歌单
-    需要提供歌单的 original_id 或 encrypted_id
+    先用 play --playlist 让 ncm-cli 管理队列，再加载 entries 用于 UI 展示
     """
     data = request.json or {}
     original_id = data.get("original_id", "")
@@ -1337,42 +1346,36 @@ def playlist_play():
     add_log(f"播放歌单：ID={playlist_id_for_log}", "command")
 
     try:
-        song_entries, err = load_playlist_song_ids(original_id, encrypted_id)
-        if err:
-            ok, detail = try_play_playlist(original_id=original_id, encrypted_id=encrypted_id)
-            if ok:
-                add_log("歌单播放：无法获取曲目列表，已切换为歌单模式播放", "status")
-                return jsonify({
-                    "success": True,
-                    "status": "ok",
-                    "mode": "playlist",
-                    "playlist_id": playlist_id_for_log,
-                    "warning": "无法获取歌单曲目列表，已使用 ncm-cli 歌单模式播放；队列展示可能为空",
-                    "attempts": err.get("attempts", []),
-                    "play_attempts": detail.get("attempts", []),
-                })
-
-            add_log(f"歌单加载失败：{err.get('error')}", "error")
-            return jsonify({"success": False, "playlist_id": playlist_id_for_log, **err}), 500
-
-        source_name = playlist_name or "歌单"
-        session_set_playlist(encrypted_id or original_id, song_entries, 0, {"type": "playlist", "name": source_name, "id": str(encrypted_id or original_id)})
-        first = song_entries[0] if song_entries else None
-        if not first:
-            return jsonify({"success": False, "error": "歌单为空"}), 500
-        ok, payload = play_song_checked(first.get("encrypted_id"), first.get("original_id") or "")
+        # 先用 play --playlist 启动播放（和 TUI 一致）
+        ok, detail = try_play_playlist(original_id=original_id, encrypted_id=encrypted_id)
         if not ok:
-            return jsonify({"success": False, **payload}), 500
-        add_log(f"歌单播放：已加载 {len(song_entries)} 首", "status")
-        return jsonify({
-            "success": True,
-            "status": "ok",
-            "mode": "session",
-            "playlist_id": playlist_id_for_log,
-            "song_count": len(song_entries),
-            "index": 0,
-            "entries": song_entries,
-        })
+            add_log(f"歌单播放失败", "error")
+            return jsonify({"success": False, "playlist_id": playlist_id_for_log, "error": "歌单播放失败", "attempts": detail.get("attempts", [])}), 500
+
+        # 异步加载 entries 用于 UI 展示
+        song_entries, err = load_playlist_song_ids(original_id, encrypted_id)
+        source_name = playlist_name or "歌单"
+        if song_entries:
+            session_set_playlist(encrypted_id or original_id, song_entries, 0, {"type": "playlist", "name": source_name, "id": str(encrypted_id or original_id)})
+            add_log(f"歌单播放：已加载 {len(song_entries)} 首", "status")
+            return jsonify({
+                "success": True,
+                "status": "ok",
+                "mode": "session",
+                "playlist_id": playlist_id_for_log,
+                "song_count": len(song_entries),
+                "index": 0,
+                "entries": song_entries,
+            })
+        else:
+            add_log("歌单播放：已启动播放，但无法获取曲目列表", "status")
+            return jsonify({
+                "success": True,
+                "status": "ok",
+                "mode": "playlist",
+                "playlist_id": playlist_id_for_log,
+                "warning": "已启动歌单播放，但无法获取曲目列表用于 UI 展示",
+            })
     except Exception as e:
         return jsonify({"error": str(e), "success": False}), 500
 
