@@ -585,10 +585,10 @@
                 <div class="volume-control">
                     <h4>⚡ 刷新间隔</h4>
                     <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                        <button class="play-mode-btn" onclick="setRefreshInterval(500)" style="flex: 1; min-width: 60px;">0.5 秒</button>
-                        <button class="play-mode-btn active" onclick="setRefreshInterval(1000)" style="flex: 1; min-width: 60px;">1 秒</button>
-                        <button class="play-mode-btn" onclick="setRefreshInterval(2000)" style="flex: 1; min-width: 60px;">2 秒</button>
-                        <button class="play-mode-btn" onclick="setRefreshInterval(5000)" style="flex: 1; min-width: 60px;">5 秒</button>
+                        <button class="play-mode-btn" onclick="onRefreshBtnClick(500, this)" style="flex: 1; min-width: 60px;">0.5 秒</button>
+                        <button class="play-mode-btn active" onclick="onRefreshBtnClick(1000, this)" style="flex: 1; min-width: 60px;">1 秒</button>
+                        <button class="play-mode-btn" onclick="onRefreshBtnClick(2000, this)" style="flex: 1; min-width: 60px;">2 秒</button>
+                        <button class="play-mode-btn" onclick="onRefreshBtnClick(5000, this)" style="flex: 1; min-width: 60px;">5 秒</button>
                     </div>
                 </div>
                 
@@ -1507,14 +1507,17 @@
         function setRefreshInterval(ms) {
             refreshInterval = ms;
             startAutoRefresh();
-            
+
             document.querySelectorAll('.play-mode-btn').forEach(btn => {
                 if (btn.textContent.includes('秒')) {
                     btn.classList.remove('active');
                 }
             });
-            event.target.classList.add('active');
-            
+        }
+
+        function onRefreshBtnClick(ms, el) {
+            setRefreshInterval(ms);
+            el.classList.add('active');
             addLog(`刷新间隔已设置为 ${ms}ms`, 'status');
         }
         

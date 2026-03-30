@@ -81,7 +81,11 @@ def run_ncm(args, output_format="json"):
 
         # 返回 JSON 或纯文本结果
         if result.stdout:
-            return result.stdout
+            try:
+                data = json.loads(result.stdout)
+                return jsonify(data)
+            except (json.JSONDecodeError, ValueError):
+                return jsonify({"status": "ok", "raw": result.stdout})
         return jsonify({"status": "ok"})
     except FileNotFoundError as e:
         return jsonify({
@@ -919,7 +923,7 @@ def playlist_tracks():
     original_id = request.args.get("original_id", "")
     if not original_id:
         return jsonify({"error": "需要提供 original_id"}), 400
-    return run_ncm(["playlist", "tracks", "--original-id", original_id])
+    return run_ncm(["playlist", "tracks", "--playlistId", original_id])
 
 
 @app.route("/album/get", methods=["GET"])
@@ -1397,22 +1401,18 @@ def search_song():
     
     add_log(f"搜索歌曲：{keyword}", "command")
 
-    result = subprocess.run(
-        ["ncm-cli", "search", "song", "--keyword", keyword, "--output", "json"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="ignore",
-    )
-    
+    returncode, stdout, stderr = run_ncm_raw(["search", "song", "--keyword", keyword], "json")
+    if returncode != 0:
+        return jsonify({"error": stderr or "搜索失败", "returncode": returncode}), 500
+
     try:
-        data = json.loads(result.stdout)
+        data = json.loads(stdout)
         # 转换数据格式
         if data.get('code') == 200:
             data['data']['songs'] = data['data'].get('records', [])
         return jsonify(data)
-    except:
-        return jsonify({"error": result.stderr}), 500
+    except (json.JSONDecodeError, ValueError):
+        return jsonify({"error": stderr or "解析搜索结果失败"}), 500
 
 @app.route("/search/playlist", methods=["GET"])
 def search_playlist():
