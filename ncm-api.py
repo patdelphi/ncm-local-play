@@ -588,8 +588,8 @@ def session_play_index(index):
                 except Exception:
                     pass
 
-    if not is_hex_32(str(encrypted_id)):
-        song_label = entry.get("name") or encrypted_id
+    if not encrypted_id:
+        song_label = entry.get("name") or "未知歌曲"
         return jsonify({"success": False, "error": f"无法解析歌曲ID：{song_label}"}), 400
 
     expected_title = ""
@@ -973,8 +973,6 @@ def song_play():
 
     if not encrypted_id:
         return jsonify({"error": "需要提供 encrypted_id"}), 400
-    if not is_hex_32(str(encrypted_id)):
-        return jsonify({"success": False, "error": "encrypted_id 格式不正确（需要32位hex加密ID）"}), 400
 
     add_log(f"播放单曲：{encrypted_id[:8]}... (索引:{index})", "command")
     session_clear_state()
