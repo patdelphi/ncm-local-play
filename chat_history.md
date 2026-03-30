@@ -209,3 +209,90 @@
 - 修复：
   - session 切歌接口改为严格检查 `play --song` 是否真实成功（按 returncode/JSON success 判定）；失败则返回 500 且不更新 session index，避免“显示变了但没切”。
   - 补充 session 切歌单测覆盖播放失败场景，并保持 tests 全绿。
+
+### 用户
+- 需求：检查每日推荐/私人FM/心动模式是否正确；播放时显示当前播放来源（歌单/红心/每日推荐等）。
+
+### 助手
+- 调整：
+  - 每日推荐/私人FM/心动模式统一切换为 session 播放（返回 mode=session+entries，播放第一首并由 session 维护索引）。
+  - session 增加 source 元数据（type/name/id），/session/status 输出 source_name 供前端展示。
+  - 前端在“正在播放”区域显示来源名称（📀），并在推荐入口切换到 session 模式后保持列表与高亮同步。
+  - 更新并跑通单元测试：新增 FM/心动模式 session 测试，tests 全绿。
+
+### 用户
+- 反馈：播放心动模式提示“推荐为空”。
+
+### 助手
+- 修复：
+  - 心动模式 `song_id` 现在强制使用原始歌曲ID（数字）；如果前端传入 32 位 hex（加密ID），会用缓存映射到 original_id；缺失则用 session 当前曲目 original_id 兜底。
+  - 无法得到有效数字 songId 时直接返回 400（避免误判为“推荐为空”）。
+  - 新增单元测试覆盖：缺 songId、hex->originalId 映射等场景，并保持 tests 全绿。
+
+### 用户
+- 反馈：终端显示 user history records=0，仍提示缺 song_id；随后又出现“推荐为空”，用户厌倦反复尝试。
+
+### 助手
+- 根因修复：重读 `ncm-cli recommend heartbeat --help` 后确认 `--songId` 需要的是“歌曲加密ID(32位hex)”，不是原始ID。
+  - 后端心动模式改为优先使用 encrypted_id（session 当前曲目 / last_played / queue label / user history）。
+  - 推荐为空时自动从 user history/last_played 提取多个加密ID种子重试，尽量减少用户手工重试。
+  - 前端改为只传当前曲目的 encryptedId 给心动模式，并在失败日志里展示 debug.steps 链路。
+  - 更新并跑通单元测试，保持 tests 全绿。
+
+## 2026-03-29
+
+### 用户
+- review一下项目，现在还有很多问题，播放列表工作不正常
+
+### 助手
+- 定位播放列表不正常的关键原因：后端 `/state` 与基础控制接口返回结构不一致，前端只认 `success` 导致状态/队列不同步。
+- 后端统一 `/state`、`/play`、`/pause`、`/stop`、`/next`、`/prev`、`/seek`、`/volume`、`/song/play` 的返回结构：补齐 `success/message/state/raw`。
+- 前端增加对 `success/status/code` 的兼容判断，并对 `/state` 返回做结构兼容提取，避免误判失败。
+- 新增单元测试覆盖状态归一化与控制接口兼容性，并验证 tests 全绿。
+
+### 用户
+- 歌曲无法播放
+
+### 助手
+- 修复：兼容 ncm-cli 在播放命令成功时 stdout 为空或非 JSON 的情况，避免后端将其误判为失败导致前端提示“无法播放”。
+- 新增单元测试覆盖空输出与非 JSON 输出两类场景，并验证 tests 全绿。
+
+### 用户
+- 1. 上一首下一首不稳定，有时候ok有时候不行，好像要点击一下歌单歌曲才能正常
+- 2. 系统初始化，播放列表应为空
+- 3. 点击歌单或红心、每日推荐、私人雷达、私人FM、心动模式，应先停下当前播放，清空播放列表，然后加载歌曲，自动播放第一首
+
+### 助手
+- 修复切歌不稳定：前端上一首/下一首统一调用后端 `/prev`/`/next`，避免前端 session 状态漂移导致调用错误接口；后端新增 `/session/clear` 并在 `/stop`、`/song/play` 时清 session，避免残留 session 抢占 next/prev。
+- 初始化播放列表为空：页面加载时主动清空播放列表状态，且默认不自动刷新 `/queue`（除非进入队列模式）。
+- 切换播放源统一流程：点击歌单/红心/每日推荐/私人雷达/私人FM/心动模式时先调用停止并清空播放列表，再请求后端加载并自动播放第一首；session 模式下仅由 session 列表驱动高亮。
+- 新增单元测试覆盖 session 清理与 stop/song_play 清 session 行为，并验证 tests 全绿。
+
+### 用户
+- 1. 切换上一首下一首，显示播放的歌名变了，但并未播放，还是在播之前的歌
+- 2. 音量系统初始化默认设为50%，不只是显示，真实音量也要调
+
+### 助手
+- 修复“显示切歌但实际没切”：后端 session 切歌在返回成功前增加 state 校验（标题需切到目标曲目），否则返回 500 且不更新 session index；非 session 的 `/next`/`/prev` 也增加 state 变化校验，避免前端误认为成功。
+- 启动时真实设置默认音量：前端初始化阶段主动调用 `/volume/50`，确保真实音量与 UI 一致。
+- 更新并跑通单元测试，保持 tests 全绿。
+
+### 用户
+- [09:49:19] 播放失败：播放未生效
+- [09:49:18] 点击播放：夢の続き - 竹内まりや (索引：9)
+- 各种报错，播放键、上一首下一首、点击播放列表歌曲，都有问题，要求整体 review 并把基本功能做好
+
+### 助手
+- 调整切歌校验策略：将“未在短时间内观测到 state 变化”从硬失败改为 `applied=false`（仍返回 success=true 且不更新 session index），避免播放器状态更新延迟导致大量误报失败。
+- 增强校验依据：轮询等待时同时考虑 title 变化与 position 重置（上一曲/下一曲/点播更稳定）。
+- 前端 session 点播收到 `applied=false` 时不再立即切换高亮，改为提示“等待生效”并触发多次刷新拉齐状态。
+- 更新并跑通单元测试，保持 tests 全绿。
+
+### 用户
+- 根本播放不了，点播放或点歌名都不行
+
+### 助手
+- 根因定位：部分接口/数据源把“数字ID”误当成“32位hex歌曲加密ID”，导致 `play --song --encrypted-id <id>` 实际无效。
+- 修复：后端提取歌曲ID时优先选择32位hex；队列接口对非hex的 encrypted_id 置空以触发前端 resolve；session 点播在ID不合法时自动 search resolve；/song/play 对非法 encrypted_id 直接报错避免假成功。
+- 前端对 encryptedId 增加 32位hex 校验，避免带着错误ID直接调用播放接口。
+- 更新并跑通单元测试，保持 tests 全绿。

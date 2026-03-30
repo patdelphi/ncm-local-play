@@ -10,6 +10,8 @@ import os
 import json
 import shutil
 import threading
+import re
+import time
 from datetime import datetime
 
 app = Flask(__name__, template_folder='templates')
@@ -21,7 +23,8 @@ song_meta_cache = {}
 queue_fill_state = {"task_id": None, "running": False, "total": 0, "done": 0}
 queue_fill_lock = threading.Lock()
 session_lock = threading.Lock()
-session_state = {"active": False, "playlist_id": None, "entries": [], "index": -1}
+session_state = {"active": False, "playlist_id": None, "entries": [], "index": -1, "source": None}
+last_played = {"encrypted_id": "", "original_id": ""}
 
 def is_hex_32(s):
     if not s or len(s) != 32:
@@ -219,17 +222,21 @@ def extract_records(payload):
 def extract_song_id(item):
     if not isinstance(item, dict):
         return ""
-    for k in ("encrypted_id", "encryptedId", "encryptId", "id", "songId"):
+    candidates = []
+    for k in ("encrypted_id", "encryptedId", "encryptId", "songId", "id"):
         v = item.get(k)
         if v:
-            return str(v)
+            candidates.append(str(v))
     nested = item.get("song")
     if isinstance(nested, dict):
         for k in ("id", "encryptedId", "songId"):
             v = nested.get(k)
             if v:
-                return str(v)
-    return ""
+                candidates.append(str(v))
+    for v in candidates:
+        if is_hex_32(v):
+            return v
+    return candidates[0] if candidates else ""
 
 def extract_song_original_id(item):
     if not isinstance(item, dict):
@@ -284,27 +291,153 @@ def try_ncm_json(args):
             "stdout": stdout,
             "args": args,
         }
+    if not (stdout or "").strip():
+        return {"status": "ok"}, None
     try:
         return json.loads(stdout), None
     except Exception:
-        return None, {
-            "returncode": returncode,
-            "stderr": stderr,
-            "stdout": stdout,
-            "args": args,
-            "error": "JSON解析失败",
-        }
+        return {"status": "ok", "raw": stdout}, None
 
-def play_song_checked(encrypted_id, original_id=""):
+def is_ncm_success(data):
+    return isinstance(data, dict) and (data.get("success") is True or data.get("status") == "ok" or data.get("code") == 200)
+
+def make_ncm_action_response(args, ok_message="ok"):
+    data, err = try_ncm_json(args)
+    if err:
+        message = err.get("stderr") or err.get("error") or "命令执行失败"
+        return jsonify({"success": False, "message": message, "error": message, **err}), 500
+    if is_ncm_success(data):
+        message = (data.get("message") if isinstance(data, dict) else None) or ok_message or "ok"
+        return jsonify({"success": True, "message": message, "raw": data})
+    message = ""
+    if isinstance(data, dict):
+        message = data.get("error") or data.get("message") or ""
+    return jsonify({"success": False, "message": message or "命令返回非成功", "raw": data}), 500
+
+def extract_state_payload(data):
+    if not isinstance(data, dict):
+        return {}
+    state = data.get("state")
+    if isinstance(state, dict):
+        return state
+    inner = data.get("data")
+    if isinstance(inner, dict):
+        inner_state = inner.get("state")
+        if isinstance(inner_state, dict):
+            return inner_state
+        return inner
+    return data
+
+def read_state_snapshot():
+    returncode, stdout, stderr = run_ncm_raw(["state"], "json")
+    if returncode != 0:
+        return None
+    if not (stdout or "").strip():
+        return None
+    try:
+        data = json.loads(stdout)
+    except Exception:
+        return None
+    state = extract_state_payload(data)
+    title = ""
+    status = ""
+    position = None
+    duration = None
+    if isinstance(state, dict):
+        title = str(state.get("title") or "")
+        status = str(state.get("status") or "")
+        try:
+            position = float(state.get("position")) if state.get("position") is not None else None
+        except Exception:
+            position = None
+        try:
+            duration = float(state.get("duration")) if state.get("duration") is not None else None
+        except Exception:
+            duration = None
+    return {"title": title, "status": status, "position": position, "duration": duration, "state": state, "raw": data}
+
+def wait_for_state_title(before_title, expected_title="", before_position=None, max_attempts=15, sleep_seconds=0.2):
+    last = None
+    for _ in range(max_attempts):
+        time.sleep(sleep_seconds)
+        snap = read_state_snapshot()
+        if not snap:
+            continue
+        last = snap
+        after_title = snap.get("title") or ""
+        after_position = snap.get("position")
+        if expected_title:
+            if after_title == expected_title or (expected_title and expected_title.split(" - ", 1)[0] and expected_title.split(" - ", 1)[0] in after_title):
+                if before_title and expected_title != before_title and after_title == before_title:
+                    continue
+                return True, snap
+        else:
+            if before_title and after_title and after_title != before_title:
+                return True, snap
+        if before_position is not None and after_position is not None:
+            try:
+                if before_position >= 3 and after_position <= 1:
+                    return True, snap
+            except Exception:
+                pass
+    return False, last
+
+def play_song_checked(encrypted_id, original_id="", expected_title=""):
     args = ["play", "--song", "--encrypted-id", str(encrypted_id)]
     if original_id:
         args.extend(["--original-id", str(original_id)])
-    data, err = try_ncm_json(args)
-    if err:
-        return False, {"error": "播放失败", **err}
-    if isinstance(data, dict) and (data.get("success") is True or data.get("status") == "ok"):
-        return True, data
-    return False, {"error": "播放失败", "raw": data, "args": args}
+    before = read_state_snapshot()
+    before_title = before.get("title") if isinstance(before, dict) else ""
+    before_position = before.get("position") if isinstance(before, dict) else None
+    returncode, stdout, stderr = run_ncm_raw(args, "json")
+    if returncode != 0:
+        return False, {"error": "播放失败", "returncode": returncode, "stderr": stderr, "stdout": stdout, "args": args}
+
+    if stdout:
+        try:
+            data = json.loads(stdout)
+            if is_ncm_success(data):
+                applied = True
+                if expected_title and expected_title != before_title and before_title:
+                    ok, after = wait_for_state_title(before_title, expected_title, before_position=before_position)
+                    if not ok:
+                        applied = False
+                        if isinstance(data, dict):
+                            data = {**data, "applied": False, "before": before, "after": after}
+                        else:
+                            data = {"success": True, "raw": data, "applied": False, "before": before, "after": after}
+                if isinstance(data, dict) and "applied" not in data:
+                    data = {**data, "applied": applied}
+                if original_id:
+                    last_played["encrypted_id"] = str(encrypted_id)
+                    last_played["original_id"] = str(original_id)
+                return True, data
+            return False, {"error": "播放失败", "raw": data, "args": args}
+        except Exception:
+            applied = True
+            if expected_title and expected_title != before_title and before_title:
+                ok, after = wait_for_state_title(before_title, expected_title, before_position=before_position)
+                if not ok:
+                    applied = False
+            if original_id:
+                last_played["encrypted_id"] = str(encrypted_id)
+                last_played["original_id"] = str(original_id)
+            payload = {"success": True, "raw": stdout, "applied": applied}
+            if not applied:
+                payload["before"] = before
+                payload["after"] = after
+            return True, payload
+
+    if original_id:
+        last_played["encrypted_id"] = str(encrypted_id)
+        last_played["original_id"] = str(original_id)
+    applied = True
+    if expected_title and expected_title != before_title and before_title:
+        ok, after = wait_for_state_title(before_title, expected_title, before_position=before_position)
+        if not ok:
+            applied = False
+            return True, {"success": True, "applied": False, "before": before, "after": after}
+    return True, {"success": True, "applied": applied}
 
 def load_playlist_song_ids(original_id, encrypted_id=None):
     """
@@ -398,12 +531,21 @@ def queueize_and_play(song_entries):
         play_args.extend(["--original-id", str(first.get("original_id"))])
     return run_ncm(play_args)
 
-def session_set_playlist(playlist_id, entries, start_index=0):
+def session_set_playlist(playlist_id, entries, start_index=0, source=None):
     with session_lock:
         session_state["active"] = True
         session_state["playlist_id"] = str(playlist_id) if playlist_id else None
         session_state["entries"] = entries or []
         session_state["index"] = int(start_index) if entries else -1
+        session_state["source"] = source
+
+def session_clear_state():
+    with session_lock:
+        session_state["active"] = False
+        session_state["playlist_id"] = None
+        session_state["entries"] = []
+        session_state["index"] = -1
+        session_state["source"] = None
 
 def session_get_snapshot():
     with session_lock:
@@ -413,6 +555,7 @@ def session_get_snapshot():
             "index": int(session_state.get("index", -1)),
             "total": len(session_state.get("entries") or []),
             "entries": list(session_state.get("entries") or []),
+            "source": session_state.get("source"),
         }
 
 def session_play_index(index):
@@ -427,18 +570,42 @@ def session_play_index(index):
     original_id = entry.get("original_id") or ""
     if not encrypted_id:
         return jsonify({"success": False, "error": "缺少 encrypted_id"}), 500
+    if not is_hex_32(str(encrypted_id)) and entry.get("name"):
+        resolved = resolve_song_ids(entry.get("name", ""), entry.get("artist", ""))
+        if isinstance(resolved, dict) and resolved.get("encrypted_id") and is_hex_32(str(resolved.get("encrypted_id"))):
+            encrypted_id = str(resolved.get("encrypted_id"))
+            if resolved.get("original_id"):
+                original_id = str(resolved.get("original_id"))
+            with session_lock:
+                try:
+                    session_state["entries"][index]["encrypted_id"] = encrypted_id
+                    if original_id:
+                        session_state["entries"][index]["original_id"] = original_id
+                except Exception:
+                    pass
 
-    ok, payload = play_song_checked(encrypted_id, original_id)
+    expected_title = ""
+    if entry.get("name") and entry.get("artist"):
+        expected_title = f"{entry.get('name')} - {entry.get('artist')}"
+    elif entry.get("name"):
+        expected_title = str(entry.get("name"))
+    ok, payload = play_song_checked(encrypted_id, original_id, expected_title=expected_title)
     if not ok:
         return jsonify({"success": False, **payload}), 500
 
-    with session_lock:
-        session_state["index"] = int(index)
+    applied = True
+    if isinstance(payload, dict) and payload.get("applied") is False:
+        applied = False
+    if applied:
+        with session_lock:
+            session_state["index"] = int(index)
 
     return jsonify({
         "success": True,
+        "applied": applied,
         "playlist_id": snap["playlist_id"],
-        "index": int(index),
+        "index": int(index) if applied else int(snap.get("index", -1)),
+        "requested_index": int(index),
         "song": {
             "name": entry.get("name", ""),
             "artist": entry.get("artist", ""),
@@ -451,7 +618,12 @@ def session_play_index(index):
 @app.route("/session/status", methods=["GET"])
 def session_status():
     snap = session_get_snapshot()
-    return jsonify({"success": True, **{k: snap[k] for k in ("active", "playlist_id", "index", "total")}})
+    payload = {k: snap[k] for k in ("active", "playlist_id", "index", "total")}
+    if isinstance(snap.get("source"), dict):
+        payload["source_type"] = snap["source"].get("type")
+        payload["source_name"] = snap["source"].get("name")
+        payload["source_id"] = snap["source"].get("id")
+    return jsonify({"success": True, **payload})
 
 @app.route("/session/playlist", methods=["GET"])
 def session_playlist():
@@ -463,7 +635,44 @@ def session_playlist():
         "index": snap["index"],
         "total": snap["total"],
         "entries": snap["entries"],
+        "source": snap.get("source"),
     })
+
+@app.route("/session/clear", methods=["POST"])
+def session_clear():
+    session_clear_state()
+    return jsonify({"success": True, "message": "session 已清空"})
+
+def build_entries_from_song_dicts(songs):
+    entries = []
+    for s in songs or []:
+        if not isinstance(s, dict):
+            continue
+        encrypted_id = ""
+        for k in ("encrypted_id", "encryptedId", "encryptId", "songId", "id"):
+            v = s.get(k)
+            if v:
+                encrypted_id = str(v)
+                if is_hex_32(encrypted_id):
+                    break
+        if not encrypted_id:
+            continue
+        original_id = s.get("originalId") or s.get("original_id") or ""
+        name = s.get("name") or ""
+        artist = ""
+        artists = s.get("artists")
+        if isinstance(artists, list):
+            artist = ",".join([a.get("name", "") for a in artists if isinstance(a, dict) and a.get("name")])
+        entry = {
+            "encrypted_id": str(encrypted_id),
+            "original_id": str(original_id) if original_id else "",
+            "name": name,
+            "artist": artist,
+        }
+        entries.append(entry)
+        if encrypted_id and (name or artist):
+            song_meta_cache[str(encrypted_id)] = {"name": name, "artist": artist, "original_id": str(original_id) if original_id else ""}
+    return entries
 
 @app.route("/session/play", methods=["POST"])
 def session_play():
@@ -556,13 +765,18 @@ def get_logs():
 @app.route("/state", methods=["GET"])
 def state():
     """获取当前播放状态"""
-    return run_ncm(["state"])
+    data, err = try_ncm_json(["state"])
+    if err:
+        message = err.get("stderr") or err.get("error") or "获取状态失败"
+        return jsonify({"success": False, "message": message, "error": message, **err}), 500
+    state_payload = extract_state_payload(data)
+    return jsonify({"success": is_ncm_success(data), "state": state_payload, "raw": data})
 
 @app.route("/play", methods=["POST"])
 def play():
     """播放（恢复播放）"""
     add_log("执行命令：play", "command")
-    result = run_ncm(["resume"])
+    result = make_ncm_action_response(["resume"], "已恢复播放")
     add_log("播放控制：已恢复播放", "status")
     return result
 
@@ -570,7 +784,7 @@ def play():
 def pause():
     """暂停播放"""
     add_log("执行命令：pause", "command")
-    result = run_ncm(["pause"])
+    result = make_ncm_action_response(["pause"], "已暂停")
     add_log("播放控制：已暂停", "status")
     return result
 
@@ -578,7 +792,8 @@ def pause():
 def stop():
     """停止播放"""
     add_log("执行命令：stop", "command")
-    result = run_ncm(["stop"])
+    session_clear_state()
+    result = make_ncm_action_response(["stop"], "已停止")
     add_log("播放控制：已停止", "status")
     return result
 
@@ -590,7 +805,19 @@ def next_song():
         add_log("执行命令：session next", "command")
         return session_next()
     add_log("执行命令：next", "command")
-    result = run_ncm(["next"])
+    before = read_state_snapshot()
+    before_title = before.get("title") if isinstance(before, dict) else ""
+    data, err = try_ncm_json(["next"])
+    if err:
+        message = err.get("stderr") or err.get("error") or "命令执行失败"
+        return jsonify({"success": False, "message": message, "error": message, **err}), 500
+    if before_title:
+        ok, after = wait_for_state_title(before_title, before_position=before.get("position") if isinstance(before, dict) else None)
+        if not ok:
+            result = jsonify({"success": True, "applied": False, "message": "切歌已发送，等待生效", "before": before, "after": after, "raw": data})
+            add_log("播放控制：下一首（等待生效）", "status")
+            return result
+    result = jsonify({"success": True, "applied": True, "message": "下一首", "raw": data})
     add_log("播放控制：下一首", "status")
     return result
 
@@ -602,7 +829,19 @@ def prev_song():
         add_log("执行命令：session prev", "command")
         return session_prev()
     add_log("执行命令：prev", "command")
-    result = run_ncm(["prev"])
+    before = read_state_snapshot()
+    before_title = before.get("title") if isinstance(before, dict) else ""
+    data, err = try_ncm_json(["prev"])
+    if err:
+        message = err.get("stderr") or err.get("error") or "命令执行失败"
+        return jsonify({"success": False, "message": message, "error": message, **err}), 500
+    if before_title:
+        ok, after = wait_for_state_title(before_title, before_position=before.get("position") if isinstance(before, dict) else None)
+        if not ok:
+            result = jsonify({"success": True, "applied": False, "message": "切歌已发送，等待生效", "before": before, "after": after, "raw": data})
+            add_log("播放控制：上一首（等待生效）", "status")
+            return result
+    result = jsonify({"success": True, "applied": True, "message": "上一首", "raw": data})
     add_log("播放控制：上一首", "status")
     return result
 
@@ -610,7 +849,7 @@ def prev_song():
 def seek(seconds):
     """跳转到指定时间（秒）"""
     add_log(f"跳转到 {seconds}秒", "command")
-    result = run_ncm(["seek", str(seconds)])
+    result = make_ncm_action_response(["seek", str(seconds)], f"已跳转到 {seconds}秒")
     add_log(f"已跳转到 {seconds}秒", "status")
     return result
 
@@ -706,7 +945,7 @@ def volume(level):
     """设置音量 (0-100)"""
     level = max(0, min(100, level))
     add_log(f"执行命令：volume {level}", "command")
-    result = run_ncm(["volume", str(level)])
+    result = make_ncm_action_response(["volume", str(level)], f"音量已设置为 {level}%")
     add_log(f"音量控制：已设置为 {level}%", "status")
     return result
 
@@ -726,13 +965,16 @@ def song_play():
 
     if not encrypted_id:
         return jsonify({"error": "需要提供 encrypted_id"}), 400
+    if not is_hex_32(str(encrypted_id)):
+        return jsonify({"success": False, "error": "encrypted_id 格式不正确（需要32位hex加密ID）"}), 400
 
     add_log(f"播放单曲：{encrypted_id[:8]}... (索引:{index})", "command")
+    session_clear_state()
     
     args = ["play", "--song", "--encrypted-id", encrypted_id]
     if original_id:
         args.extend(["--original-id", str(original_id)])
-    result = run_ncm(args)
+    result = make_ncm_action_response(args, "已发送播放请求")
     
     add_log("单曲播放：已发送播放请求", "status")
     return result
@@ -761,9 +1003,6 @@ def play_recommend_daily():
     """
     add_log("播放每日推荐", "command")
     
-    # 先清空队列
-    run_ncm(["queue", "clear"])
-    
     # 获取每日推荐
     try:
         returncode, stdout, stderr = run_ncm_raw(["recommend", "daily", "--limit", "30"], "json")
@@ -777,25 +1016,19 @@ def play_recommend_daily():
         if not songs or len(songs) == 0:
             add_log("每日推荐为空", "error")
             return jsonify({"error": "每日推荐为空"}), 400
-        
-        # 逐首添加到队列
-        for song in songs:
-            args = ["queue", "add", "--encrypted-id", str(song.get("id"))]
-            if song.get("originalId"):
-                args.extend(["--original-id", str(song.get("originalId"))])
-            run_ncm(args, "json")
-        
-        # 播放第一首
-        if songs:
-            first_song = songs[0]
-            play_args = ["play", "--song", "--encrypted-id", str(first_song.get("id"))]
-            if first_song.get("originalId"):
-                play_args.extend(["--original-id", str(first_song.get("originalId"))])
-            result = run_ncm(play_args)
-            add_log(f"每日推荐：已加载 {len(songs)} 首歌曲", "status")
-            return result
-        
-        return jsonify({"status": "ok"})
+
+        entries = build_entries_from_song_dicts(songs)
+        if not entries:
+            add_log("每日推荐：无法提取歌曲ID", "error")
+            return jsonify({"error": "每日推荐：无法提取歌曲ID"}), 500
+
+        session_set_playlist("daily", entries, 0, {"type": "daily", "name": "每日推荐", "id": None})
+        first = entries[0]
+        ok, payload = play_song_checked(first.get("encrypted_id"), first.get("original_id") or "")
+        if not ok:
+            return jsonify({"success": False, **payload}), 500
+        add_log(f"每日推荐：已加载 {len(entries)} 首歌曲", "status")
+        return jsonify({"success": True, "status": "ok", "mode": "session", "song_count": len(entries), "index": 0, "entries": entries})
     except Exception as e:
         add_log(f"播放每日推荐失败：{str(e)}", "error")
         return jsonify({"error": str(e)}), 500
@@ -821,24 +1054,18 @@ def play_fm():
         if not songs or len(songs) == 0:
             return jsonify({"error": "FM 推荐为空"}), 400
         
-        # 清空队列并添加 FM 歌曲
-        run_ncm(["queue", "clear"])
-        
-        for song in songs:
-            args = ["queue", "add", "--encrypted-id", str(song.get("id"))]
-            if song.get("originalId"):
-                args.extend(["--original-id", str(song.get("originalId"))])
-            run_ncm(args, "json")
-        
-        # 播放第一首
-        first_song = songs[0]
-        play_args = ["play", "--song", "--encrypted-id", str(first_song.get("id"))]
-        if first_song.get("originalId"):
-            play_args.extend(["--original-id", str(first_song.get("originalId"))])
-        result = run_ncm(play_args)
-        
-        add_log(f"私人 FM：已加载 {len(songs)} 首歌曲", "status")
-        return result
+        entries = build_entries_from_song_dicts(songs)
+        if not entries:
+            return jsonify({"error": "FM 推荐：无法提取歌曲ID"}), 500
+
+        session_set_playlist("fm", entries, 0, {"type": "fm", "name": "私人 FM", "id": None})
+        first = entries[0]
+        ok, payload = play_song_checked(first.get("encrypted_id"), first.get("original_id") or "")
+        if not ok:
+            return jsonify({"success": False, **payload}), 500
+
+        add_log(f"私人 FM：已加载 {len(entries)} 首歌曲", "status")
+        return jsonify({"success": True, "status": "ok", "mode": "session", "song_count": len(entries), "index": 0, "entries": entries})
     except Exception as e:
         add_log(f"播放 FM 失败：{str(e)}", "error")
         return jsonify({"error": str(e)}), 500
@@ -857,40 +1084,147 @@ def play_heartbeat():
     
     # 获取心动模式推荐
     try:
-        cmd = [
-            "recommend", "heartbeat",
-            "--songId", song_id if song_id else "",
-            "--count", count
-        ]
+        debug = {"input_song_id": str(song_id or ""), "steps": []}
+        resolved_encrypted_id = str(song_id).strip() if song_id else ""
+        if resolved_encrypted_id and not is_hex_32(resolved_encrypted_id):
+            debug["steps"].append({"step": "input_not_hex32", "value": resolved_encrypted_id})
+            resolved_encrypted_id = ""
+
+        if not resolved_encrypted_id:
+            snap = session_get_snapshot()
+            if snap.get("active") and 0 <= int(snap.get("index", -1)) < int(snap.get("total", 0)):
+                entry = snap.get("entries", [])[int(snap.get("index", 0))]
+                candidate = str(entry.get("encrypted_id") or "").strip()
+                if is_hex_32(candidate):
+                    resolved_encrypted_id = candidate
+                    debug["steps"].append({"step": "session_current", "encrypted_id": resolved_encrypted_id})
+                else:
+                    debug["steps"].append({"step": "session_current_invalid", "value": candidate})
+
+        if not resolved_encrypted_id:
+            candidate = str(last_played.get("encrypted_id") or "").strip()
+            if is_hex_32(candidate):
+                resolved_encrypted_id = candidate
+                debug["steps"].append({"step": "last_played", "encrypted_id": resolved_encrypted_id})
+            elif candidate:
+                debug["steps"].append({"step": "last_played_invalid", "value": candidate})
+
+        if not resolved_encrypted_id:
+            qrcode, qstdout, qstderr = run_ncm_raw(["queue"], "json")
+            if qrcode == 0:
+                try:
+                    qdata = json.loads(qstdout)
+                    q = qdata.get("queue") or []
+                    cur = next((it for it in q if isinstance(it, dict) and it.get("current")), q[0] if q else None)
+                    label = (cur.get("label") or "") if isinstance(cur, dict) else ""
+                    m = re.search(r"歌曲 ID:\s*([0-9A-Fa-f]{32})", label)
+                    hex_id = m.group(1) if m else ""
+                    resolved_encrypted_id = hex_id or ""
+                    debug["steps"].append({"step": "queue_label", "found": bool(m), "hex": hex_id})
+                except Exception:
+                    debug["steps"].append({"step": "queue_parse_failed"})
+            else:
+                debug["steps"].append({"step": "queue_failed", "returncode": qrcode, "stderr": (qstderr or "").strip()})
+
+        if not resolved_encrypted_id:
+            returncode, hstdout, hstderr = run_ncm_raw(["user", "history"], "json")
+            if returncode == 0:
+                try:
+                    history = json.loads(hstdout)
+                    recs = extract_records(history)
+                    if recs:
+                        resolved_encrypted_id = str(extract_song_id(recs[0]) or "").strip()
+                        if resolved_encrypted_id:
+                            add_log("心动模式：使用最近播放歌曲作为基准", "status")
+                    debug["steps"].append({"step": "history_json", "records": len(recs), "encrypted_id": resolved_encrypted_id})
+                except Exception:
+                    m = re.search(r'"id"\s*:\s*"([0-9A-Fa-f]{32})"', hstdout or "")
+                    resolved_encrypted_id = m.group(1) if m else ""
+                    debug["steps"].append({"step": "history_regex", "found": bool(m), "encrypted_id": resolved_encrypted_id})
+            else:
+                debug["steps"].append({"step": "history_failed", "returncode": returncode, "stderr": (hstderr or "").strip()})
+
+        if not resolved_encrypted_id or not is_hex_32(resolved_encrypted_id):
+            sys.stderr.write("[heartbeat] resolve songId failed: " + json.dumps(debug, ensure_ascii=False) + "\n")
+            return jsonify({"error": "心动模式需要 song_id（歌曲加密ID）", "success": False, "debug": debug}), 400
+
+        cmd = ["recommend", "heartbeat", "--songId", str(resolved_encrypted_id), "--count", str(count)]
         returncode, stdout, stderr = run_ncm_raw(cmd, "json")
         if returncode != 0:
             add_log(f"获取心动模式失败：{stderr.strip()}", "error")
-            return jsonify({"error": "获取心动模式失败", "stderr": stderr, "stdout": stdout, "returncode": returncode}), 500
+            debug["steps"].append({"step": "heartbeat_failed", "returncode": returncode, "stderr": (stderr or "").strip()})
+            sys.stderr.write("[heartbeat] recommend failed: " + json.dumps(debug, ensure_ascii=False) + "\n")
+            return jsonify({"error": "获取心动模式失败", "stderr": stderr, "stdout": stdout, "returncode": returncode, "debug": debug}), 500
 
         result_data = json.loads(stdout)
         songs = result_data.get('data', [])
         
         if not songs or len(songs) == 0:
-            return jsonify({"error": "心动模式推荐为空"}), 400
+            debug["steps"].append({"step": "heartbeat_empty", "songId": str(resolved_encrypted_id)})
+
+            candidates = []
+            if is_hex_32(resolved_encrypted_id):
+                candidates.append(str(resolved_encrypted_id))
+            if last_played.get("encrypted_id") and is_hex_32(str(last_played.get("encrypted_id"))):
+                candidates.append(str(last_played.get("encrypted_id")))
+
+            returncode, hstdout, hstderr = run_ncm_raw(["user", "history"], "json")
+            if returncode == 0:
+                try:
+                    history = json.loads(hstdout)
+                    recs = extract_records(history)
+                    for r in recs[:10]:
+                        eid = str(extract_song_id(r) or "").strip()
+                        if is_hex_32(eid):
+                            candidates.append(eid)
+                    debug["steps"].append({"step": "history_candidates", "count": len(recs), "candidates": list(dict.fromkeys(candidates))[:5]})
+                except Exception:
+                    debug["steps"].append({"step": "history_candidates_parse_failed"})
+            else:
+                debug["steps"].append({"step": "history_candidates_failed", "returncode": returncode, "stderr": (hstderr or "").strip()})
+
+            uniq = []
+            for c in candidates:
+                if c and is_hex_32(c) and c not in uniq:
+                    uniq.append(c)
+
+            retry_count = str(max(int(count) if str(count).isdigit() else 20, 30))
+            for seed in uniq[:5]:
+                if seed == str(resolved_encrypted_id):
+                    continue
+                cmd = ["recommend", "heartbeat", "--songId", str(seed), "--count", retry_count]
+                rc, out, err = run_ncm_raw(cmd, "json")
+                if rc != 0:
+                    debug["steps"].append({"step": "heartbeat_retry_failed", "songId": str(seed), "returncode": rc, "stderr": (err or "").strip()})
+                    continue
+                try:
+                    rd = json.loads(out)
+                    ss = rd.get("data") or []
+                except Exception:
+                    debug["steps"].append({"step": "heartbeat_retry_parse_failed", "songId": str(seed)})
+                    continue
+                debug["steps"].append({"step": "heartbeat_retry", "songId": str(seed), "songs": len(ss)})
+                if ss:
+                    resolved_encrypted_id = str(seed)
+                    songs = ss
+                    break
+
+            if not songs:
+                sys.stderr.write("[heartbeat] empty: " + json.dumps(debug, ensure_ascii=False) + "\n")
+                return jsonify({"error": "心动模式推荐为空", "success": False, "debug": debug}), 400
         
-        # 清空队列并添加推荐歌曲
-        run_ncm(["queue", "clear"])
-        
-        for song in songs:
-            args = ["queue", "add", "--encrypted-id", str(song.get("id"))]
-            if song.get("originalId"):
-                args.extend(["--original-id", str(song.get("originalId"))])
-            run_ncm(args, "json")
-        
-        # 播放第一首
-        first_song = songs[0]
-        play_args = ["play", "--song", "--encrypted-id", str(first_song.get("id"))]
-        if first_song.get("originalId"):
-            play_args.extend(["--original-id", str(first_song.get("originalId"))])
-        result = run_ncm(play_args)
-        
-        add_log(f"心动模式：已加载 {len(songs)} 首歌曲", "status")
-        return result
+        entries = build_entries_from_song_dicts(songs)
+        if not entries:
+            return jsonify({"error": "心动模式：无法提取歌曲ID"}), 500
+
+        session_set_playlist("heartbeat", entries, 0, {"type": "heartbeat", "name": "心动模式", "id": str(resolved_encrypted_id)})
+        first = entries[0]
+        ok, payload = play_song_checked(first.get("encrypted_id"), first.get("original_id") or "")
+        if not ok:
+            return jsonify({"success": False, **payload}), 500
+
+        add_log(f"心动模式：已加载 {len(entries)} 首歌曲", "status")
+        return jsonify({"success": True, "status": "ok", "mode": "session", "song_count": len(entries), "index": 0, "entries": entries})
     except Exception as e:
         add_log(f"播放心动模式失败：{str(e)}", "error")
         return jsonify({"error": str(e)}), 500
@@ -945,7 +1279,7 @@ def play_user_favorite():
             add_log(f"红心歌单加载失败：{err.get('error')}", "error")
             return jsonify({"success": False, **err}), 500
 
-        session_set_playlist(encrypted_id or original_id, song_entries, 0)
+        session_set_playlist(encrypted_id or original_id, song_entries, 0, {"type": "favorite", "name": "红心歌单", "id": str(encrypted_id or original_id)})
         first = song_entries[0] if song_entries else None
         if not first:
             return jsonify({"success": False, "error": "歌单为空"}), 500
@@ -988,6 +1322,7 @@ def playlist_play():
     data = request.json or {}
     original_id = data.get("original_id", "")
     encrypted_id = data.get("encrypted_id", "")
+    playlist_name = data.get("playlist_name", "")
 
     if not original_id and not encrypted_id:
         return jsonify({"error": "需要提供 original_id 或 encrypted_id", "success": False}), 400
@@ -1014,7 +1349,8 @@ def playlist_play():
             add_log(f"歌单加载失败：{err.get('error')}", "error")
             return jsonify({"success": False, "playlist_id": playlist_id_for_log, **err}), 500
 
-        session_set_playlist(encrypted_id or original_id, song_entries, 0)
+        source_name = playlist_name or "歌单"
+        session_set_playlist(encrypted_id or original_id, song_entries, 0, {"type": "playlist", "name": source_name, "id": str(encrypted_id or original_id)})
         first = song_entries[0] if song_entries else None
         if not first:
             return jsonify({"success": False, "error": "歌单为空"}), 500
@@ -1193,6 +1529,8 @@ def queue_list():
                     or song.get('songId')
                     or ''
                 )
+            if song.get('encrypted_id') and not is_hex_32(str(song.get('encrypted_id'))):
+                song['encrypted_id'] = ''
             if not song.get('original_id'):
                 song['original_id'] = (
                     song.get('originalId')

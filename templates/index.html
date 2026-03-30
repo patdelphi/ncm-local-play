@@ -641,6 +641,8 @@
         let queueFillTaskId = null;
         let queueFillPollTimer = null;
         let sessionActive = false;
+        let sessionSourceName = '';
+        let queueAutoRefreshEnabled = false;
         
         // ========== 日志功能 ==========
         function addLog(message, type = 'status') {
@@ -660,6 +662,60 @@
             while (logContainer.children.length > 50) {
                 logContainer.removeChild(logContainer.lastChild);
             }
+        }
+
+        function apiIsSuccess(data) {
+            if (!data) return false;
+            if (data.success === true) return true;
+            if (data.status === 'ok') return true;
+            if (data.code === 200) return true;
+            return false;
+        }
+
+        function apiMessage(data) {
+            if (!data) return '';
+            return data.message || data.error || data.detail || '';
+        }
+
+        function extractStateFromApi(data) {
+            if (!data || typeof data !== 'object') return null;
+            if (data.state && typeof data.state === 'object') return data.state;
+            if (data.data && typeof data.data === 'object') {
+                if (data.data.state && typeof data.data.state === 'object') return data.data.state;
+                return data.data;
+            }
+            return data;
+        }
+
+        function isHex32(s) {
+            return typeof s === 'string' && /^[0-9a-fA-F]{32}$/.test(s);
+        }
+
+        function resetPlaylistUI() {
+            sessionActive = false;
+            sessionSourceName = '';
+            queueAutoRefreshEnabled = false;
+            currentPlaylist = [];
+            currentPlayIndex = -1;
+            updateSongList();
+            updateNowPlaying();
+        }
+
+        async function stopAndResetBeforeLoad(sourceName) {
+            resetPlaylistUI();
+            addLog(`切换播放源：${sourceName}，停止并清空播放列表`, 'command');
+            try {
+                const stopResp = await fetch('/stop', { method: 'POST' });
+                const stopData = await stopResp.json();
+                if (!apiIsSuccess(stopData)) {
+                    addLog(`停止失败：${apiMessage(stopData) || '未知错误'}`, 'error');
+                }
+            } catch (e) {
+                addLog(`停止错误：${e.message}`, 'error');
+            }
+            try {
+                await fetch('/session/clear', { method: 'POST' });
+            } catch (e) {}
         }
         
         // ========== 用户信息 ==========
@@ -744,6 +800,7 @@
             if (!playlist) return;
 
             try {
+                await stopAndResetBeforeLoad(String(playlist.name || '歌单'));
                 addLog(`播放歌单：${playlist.name}`, 'command');
 
                 const response = await fetch('/playlist/play', {
@@ -751,18 +808,22 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         original_id: playlist.originalId ? String(playlist.originalId) : '',
-                        encrypted_id: String(playlist.id || '')
+                        encrypted_id: String(playlist.id || ''),
+                        playlist_name: String(playlist.name || '')
                     })
                 });
                 const data = await response.json();
 
-                if (data.status === 'ok' || data.success) {
+                if (apiIsSuccess(data)) {
                     addLog(`已播放：${playlist.name}`, 'status');
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
                         sessionActive = true;
+                        sessionSourceName = String(playlist.name || '');
+                        queueAutoRefreshEnabled = false;
                         applySessionEntries(data.entries, data.index || 0);
                     } else {
                         sessionActive = false;
+                        queueAutoRefreshEnabled = true;
                     }
                     if (data.mode === 'playlist') {
                         addLog(data.warning || '已切换为歌单模式播放（队列可能为空）', 'status');
@@ -794,11 +855,14 @@
                     const response = await fetch('/state');
                     const data = await response.json();
                     
-                    if (data.success) {
-                        currentState = data.state;
-                        updateStatusDisplay(data.state);
-                        updateLastUpdate();
-                        updatePlayPauseBtn();
+                    if (apiIsSuccess(data)) {
+                        const state = extractStateFromApi(data);
+                        if (state) {
+                            currentState = state;
+                            updateStatusDisplay(state);
+                            updateLastUpdate();
+                            updatePlayPauseBtn();
+                        }
                     }
                 } catch (error) {
                     console.log('获取状态失败:', error);
@@ -816,10 +880,12 @@
 
                 if (!data.active) {
                     sessionActive = false;
+                    sessionSourceName = '';
                     return;
                 }
 
                 sessionActive = true;
+                sessionSourceName = data.source_name || sessionSourceName || '';
                 const newIndex = typeof data.index === 'number' ? data.index : -1;
                 if (newIndex >= 0 && newIndex !== currentPlayIndex) {
                     currentPlayIndex = newIndex;
@@ -893,6 +959,7 @@
         async function fetchQueue() {
             if (isFetchingQueue) return;
             if (sessionActive) return;
+            if (!queueAutoRefreshEnabled) return;
             isFetchingQueue = true;
 
             try {
@@ -904,10 +971,11 @@
                     currentPlaylist = data.queue.map((song, index) => {
                         const cacheKey = `${song.name || song.label || ''} - ${song.artist || ''}`.trim();
                         const cachedEncryptedId = encryptedIdCache.get(cacheKey) || '';
+                        const rawEncryptedId = String(song.encrypted_id || song.encryptedId || song.id || cachedEncryptedId || '');
                         return {
                             name: song.name || song.label || '未知歌曲',
                             artist: song.artist || '未知艺术家',
-                            encryptedId: song.encrypted_id || song.encryptedId || song.id || cachedEncryptedId,
+                            encryptedId: isHex32(rawEncryptedId) ? rawEncryptedId : '',
                             originalId: song.original_id || song.originalId || '',
                             current: song.current || false
                         };
@@ -965,6 +1033,7 @@
             const queueLength = document.getElementById('queueLength');
             const playProgress = document.getElementById('playProgress');
             const playlistInfo = document.getElementById('playlistInfo');
+            const playlistName = document.getElementById('playlistName');
             
             // 使用前端维护的索引
             const song = currentPlayIndex >= 0 ? currentPlaylist[currentPlayIndex] : null;
@@ -984,8 +1053,9 @@
             }
             
             // 显示播放列表信息
-            if (currentPlaylist.length > 0) {
+            if (sessionActive || currentPlaylist.length > 0) {
                 playlistInfo.style.display = 'flex';
+                playlistName.textContent = sessionSourceName || '播放列表';
             } else {
                 playlistInfo.style.display = 'none';
             }
@@ -1103,11 +1173,20 @@
                     });
                     const data = await response.json();
                     if (data.success) {
-                        currentPlayIndex = data.index;
-                        updateSongList();
-                        updateNowPlaying();
-                        addLog(`已播放：${song.name}`, 'status');
-                        setTimeout(() => fetchState(), 300);
+                        if (data.applied === false) {
+                            addLog(`播放指令已发送，等待生效：${song.name}`, 'status');
+                            setTimeout(() => fetchState(), 300);
+                            setTimeout(() => fetchSessionStatus(), 500);
+                            setTimeout(() => fetchState(), 900);
+                            setTimeout(() => fetchSessionStatus(), 1200);
+                        } else {
+                            currentPlayIndex = data.index;
+                            updateSongList();
+                            updateNowPlaying();
+                            addLog(`已播放：${song.name}`, 'status');
+                            setTimeout(() => fetchState(), 300);
+                            setTimeout(() => fetchSessionStatus(), 500);
+                        }
                     } else {
                         addLog(`播放失败：${data.error || data.message}`, 'error');
                     }
@@ -1181,40 +1260,16 @@
         }
         
         async function playPrev() {
-            if (sessionActive) {
-                try {
-                    const response = await fetch('/session/prev', { method: 'POST' });
-                    const data = await response.json();
-                    if (data.success) {
-                        currentPlayIndex = data.index;
-                        updateSongList();
-                        updateNowPlaying();
-                    }
-                } catch (e) {}
-                setTimeout(() => fetchState(), 200);
-                return;
-            }
             await control('prev');
             setTimeout(() => fetchState(), 200);
+            setTimeout(() => fetchSessionStatus(), 250);
             setTimeout(() => fetchQueue(), 400);
         }
         
         async function playNext() {
-            if (sessionActive) {
-                try {
-                    const response = await fetch('/session/next', { method: 'POST' });
-                    const data = await response.json();
-                    if (data.success) {
-                        currentPlayIndex = data.index;
-                        updateSongList();
-                        updateNowPlaying();
-                    }
-                } catch (e) {}
-                setTimeout(() => fetchState(), 200);
-                return;
-            }
             await control('next');
             setTimeout(() => fetchState(), 200);
+            setTimeout(() => fetchSessionStatus(), 250);
             setTimeout(() => fetchQueue(), 400);
         }
         
@@ -1230,11 +1285,14 @@
                 const response = await fetch(`/${action}`, { method: 'POST' });
                 const data = await response.json();
 
-                if (data.success) {
-                    addLog(`${action}: ${data.message}`, 'status');
+                if (apiIsSuccess(data)) {
+                    addLog(`${action}: ${apiMessage(data) || 'ok'}`, 'status');
+                    if (action === 'stop') {
+                        resetPlaylistUI();
+                    }
                     setTimeout(() => fetchQueue(), 300);
                 } else {
-                    addLog(`${action} 失败：${data.message}`, 'error');
+                    addLog(`${action} 失败：${apiMessage(data) || '未知错误'}`, 'error');
                 }
             } catch (error) {
                 addLog(`命令执行错误：${error.message}`, 'error');
@@ -1245,6 +1303,7 @@
         // 刷新播放列表的辅助函数
         function refreshPlaylistAfterPlay() {
             sessionActive = false;
+            queueAutoRefreshEnabled = true;
             currentPlaylist = [];
             currentPlayIndex = -1;
             setTimeout(() => fetchQueue(), 500);
@@ -1254,14 +1313,17 @@
 
         async function playFavorites() {
             try {
+                await stopAndResetBeforeLoad('红心歌单');
                 addLog('播放红心歌单', 'command');
                 const response = await fetch('/user/favorite/play', { method: 'POST' });
                 const data = await response.json();
 
-                if (data.status === 'ok' || data.success) {
+                if (apiIsSuccess(data)) {
                     addLog('红心歌单播放成功', 'status');
                     if (data.mode === 'session' && Array.isArray(data.entries)) {
                         sessionActive = true;
+                        sessionSourceName = '红心歌单';
+                        queueAutoRefreshEnabled = false;
                         applySessionEntries(data.entries, data.index || 0);
                         setTimeout(() => fetchState(), 300);
                     } else {
@@ -1278,14 +1340,23 @@
 
         async function playRecommend() {
             try {
+                await stopAndResetBeforeLoad('每日推荐');
                 addLog('播放每日推荐', 'command');
 
                 const response = await fetch('/recommend/daily/play', { method: 'POST' });
                 const data = await response.json();
 
-                if (data.status === 'ok' || data.success) {
+                if (apiIsSuccess(data)) {
                     addLog('每日推荐播放成功', 'status');
-                    refreshPlaylistAfterPlay();
+                    if (data.mode === 'session' && Array.isArray(data.entries)) {
+                        sessionActive = true;
+                        queueAutoRefreshEnabled = false;
+                        applySessionEntries(data.entries, data.index || 0);
+                        setTimeout(() => fetchState(), 300);
+                        setTimeout(() => fetchSessionStatus(), 350);
+                    } else {
+                        refreshPlaylistAfterPlay();
+                    }
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1296,6 +1367,7 @@
 
         async function playRadar() {
             try {
+                await stopAndResetBeforeLoad('私人雷达');
                 addLog('播放私人雷达', 'command');
 
                 const response = await fetch('/playlist/radar');
@@ -1314,16 +1386,20 @@
                     });
                     const playData = await playResponse.json();
 
-                    if (playData.status === 'ok' || playData.success) {
+                    if (apiIsSuccess(playData)) {
                         addLog(`开始播放：${playlist.name}`, 'status');
                         if (playData.mode === 'session' && Array.isArray(playData.entries)) {
                             sessionActive = true;
+                            sessionSourceName = String(playlist.name || '');
+                            queueAutoRefreshEnabled = false;
                             applySessionEntries(playData.entries, playData.index || 0);
                             setTimeout(() => fetchState(), 300);
                         } else {
                             sessionActive = false;
                             refreshPlaylistAfterPlay();
                         }
+                    } else {
+                        addLog(`播放失败：${apiMessage(playData) || '未知错误'}`, 'error');
                     }
                 }
             } catch (error) {
@@ -1333,14 +1409,23 @@
 
         async function playFM() {
             try {
+                await stopAndResetBeforeLoad('私人 FM');
                 addLog('播放私人 FM', 'command');
 
                 const response = await fetch('/recommend/fm/play', { method: 'POST' });
                 const data = await response.json();
 
-                if (data.status === 'ok' || data.success) {
+                if (apiIsSuccess(data)) {
                     addLog('私人 FM 播放成功', 'status');
-                    refreshPlaylistAfterPlay();
+                    if (data.mode === 'session' && Array.isArray(data.entries)) {
+                        sessionActive = true;
+                        queueAutoRefreshEnabled = false;
+                        applySessionEntries(data.entries, data.index || 0);
+                        setTimeout(() => fetchState(), 300);
+                        setTimeout(() => fetchSessionStatus(), 350);
+                    } else {
+                        refreshPlaylistAfterPlay();
+                    }
                 } else {
                     addLog(`播放失败：${data.error || data.message}`, 'error');
                 }
@@ -1351,10 +1436,10 @@
 
         async function playHeartbeat() {
             try {
-                addLog('播放心动模式', 'command');
-
                 const currentSong = currentPlayIndex >= 0 ? currentPlaylist[currentPlayIndex] : null;
                 const songId = currentSong?.encryptedId || '';
+                await stopAndResetBeforeLoad('心动模式');
+                addLog('播放心动模式', 'command');
 
                 const response = await fetch('/recommend/heartbeat', {
                     method: 'POST',
@@ -1366,11 +1451,21 @@
                 });
                 const data = await response.json();
 
-                if (data.status === 'ok' || data.success) {
+                if (apiIsSuccess(data)) {
                     addLog('心动模式播放成功', 'status');
-                    refreshPlaylistAfterPlay();
+                    if (data.mode === 'session' && Array.isArray(data.entries)) {
+                        sessionActive = true;
+                        queueAutoRefreshEnabled = false;
+                        applySessionEntries(data.entries, data.index || 0);
+                        setTimeout(() => fetchState(), 300);
+                        setTimeout(() => fetchSessionStatus(), 350);
+                    } else {
+                        refreshPlaylistAfterPlay();
+                    }
                 } else {
-                    addLog(`播放失败：${data.error || data.message}`, 'error');
+                    const dbg = data.debug && Array.isArray(data.debug.steps) ? data.debug.steps : null;
+                    const dbgText = dbg ? ` (${dbg.map(s => s.step).join(' > ')})` : '';
+                    addLog(`播放失败：${data.error || data.message}${dbgText}`, 'error');
                 }
             } catch (error) {
                 addLog(`心动模式错误：${error.message}`, 'error');
@@ -1435,7 +1530,7 @@
                 try {
                     const response = await fetch(`/volume/${this.value}`, { method: 'POST' });
                     const data = await response.json();
-                    if (data.success) {
+                    if (apiIsSuccess(data)) {
                         addLog(`音量已设置为 ${this.value}%`, 'status');
                     }
                 } catch (error) {
@@ -1463,9 +1558,20 @@
                     fetchUserInfo();
                 }
             });
+            resetPlaylistUI();
+            try {
+                const vol = 50;
+                const slider = document.getElementById('volumeSlider');
+                if (slider) slider.value = String(vol);
+                const valueEl = document.getElementById('volumeValue');
+                if (valueEl) valueEl.textContent = `${vol}%`;
+                fetch(`/volume/${vol}`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(d => { if (!apiIsSuccess(d)) addLog(`音量初始化失败：${apiMessage(d) || '未知错误'}`, 'error'); })
+                    .catch(e => addLog(`音量初始化错误：${e.message}`, 'error'));
+            } catch (e) {}
             fetchState();
             fetchSessionStatus();
-            fetchQueue();
             startAutoRefresh();
             addLog('系统已就绪', 'status');
         });
