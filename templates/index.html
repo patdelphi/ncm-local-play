@@ -1178,98 +1178,47 @@
 
             addLog(`点击播放：${song.name} - ${song.artist} (索引：${index})`, 'command');
 
-            if (sessionActive) {
-                try {
-                    const response = await fetch('/session/play', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ index })
-                    });
-                    const data = await response.json();
-                    if (data.success) {
-                        if (data.applied === false) {
-                            addLog(`播放指令已发送，等待生效：${song.name}`, 'status');
-                            setTimeout(() => fetchState(), 300);
-                            setTimeout(() => fetchSessionStatus(), 500);
-                            setTimeout(() => fetchState(), 900);
-                            setTimeout(() => fetchSessionStatus(), 1200);
-                        } else {
-                            currentPlayIndex = data.index;
-                            updateSongList();
-                            updateNowPlaying();
-                            addLog(`已播放：${song.name}`, 'status');
-                            setTimeout(() => fetchState(), 300);
-                            setTimeout(() => fetchSessionStatus(), 500);
-                        }
-                    } else {
-                        addLog(`播放失败：${data.error || data.message}`, 'error');
-                    }
-                } catch (error) {
-                    addLog(`播放错误：${error.message}`, 'error');
-                }
-                return;
-            }
+            // 统一走 encryptedId 或 resolve 播放，不依赖 session index
+            try {
+                let encId = song.encryptedId;
+                let origId = song.originalId || '';
 
-            // 如果有 encryptedId，直接播放
-            if (song.encryptedId) {
-                try {
-                    const response = await fetch('/song/play', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            encrypted_id: song.encryptedId,
-                            index: index
-                        })
-                    });
-                    const data = await response.json();
-
-                    if (data.success || data.status === 'ok') {
-                        currentPlayIndex = index;
-                        updateSongList();
-                        updateNowPlaying();
-                        addLog(`已播放：${song.name}`, 'status');
-                        setTimeout(() => fetchQueue(), 1000);
-                    } else {
-                        addLog(`播放失败：${data.error || data.message}`, 'error');
-                    }
-                } catch (error) {
-                    addLog(`播放错误：${error.message}`, 'error');
-                }
-            } else {
-                try {
+                if (!encId) {
                     addLog(`解析歌曲ID：${song.name} - ${song.artist}`, 'command');
-                    const resolveResponse = await fetch(`/song/resolve?name=${encodeURIComponent(song.name)}&artist=${encodeURIComponent(song.artist)}`);
-                    const resolveData = await resolveResponse.json();
-                    if (!resolveData.success) {
+                    const resolveResp = await fetch(`/song/resolve?name=${encodeURIComponent(song.name)}&artist=${encodeURIComponent(song.artist)}`);
+                    const resolveData = await resolveResp.json();
+                    if (!resolveData.success || !resolveData.encrypted_id) {
                         addLog(`未找到歌曲：${resolveData.error || '未知错误'}`, 'error');
                         return;
                     }
-
-                    const playResponse = await fetch('/song/play', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            encrypted_id: resolveData.encrypted_id,
-                            original_id: resolveData.original_id || '',
-                            index: index
-                        })
-                    });
-                    const playData = await playResponse.json();
-
-                    if (playData.success || playData.status === 'ok') {
-                        currentPlayIndex = index;
-                        currentPlaylist[index].encryptedId = resolveData.encrypted_id;
-                        encryptedIdCache.set(`${song.name} - ${song.artist}`, resolveData.encrypted_id);
-                        updateSongList();
-                        updateNowPlaying();
-                        addLog(`已播放：${song.name}`, 'status');
-                        setTimeout(() => fetchQueue(), 1000);
-                    } else {
-                        addLog(`播放失败：${playData.error || playData.message}`, 'error');
-                    }
-                } catch (error) {
-                    addLog(`解析/播放错误：${error.message}`, 'error');
+                    encId = resolveData.encrypted_id;
+                    origId = resolveData.original_id || origId;
+                    currentPlaylist[index].encryptedId = encId;
                 }
+
+                const response = await fetch('/song/play', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        encrypted_id: encId,
+                        original_id: origId,
+                        index: index
+                    })
+                });
+                const data = await response.json();
+
+                if (apiIsSuccess(data)) {
+                    currentPlayIndex = index;
+                    updateSongList();
+                    updateNowPlaying();
+                    addLog(`已播放：${song.name}`, 'status');
+                    setTimeout(() => fetchState(), 300);
+                    setTimeout(() => fetchQueue(), 1500);
+                } else {
+                    addLog(`播放失败：${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`播放错误：${error.message}`, 'error');
             }
         }
         
